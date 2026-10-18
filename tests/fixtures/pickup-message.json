@@ -1,0 +1,163 @@
+{
+  "head": {
+    "status": "200",
+    "data": {}
+  },
+  "body": {
+    "stores": [
+      {
+        "storeEmail": "centralworld@apple.com",
+        "storeName": "Central World",
+        "reservationUrl": "http://www.apple.com/th/retail/centralworld",
+        "country": "TH",
+        "city": "กรุงเทพมหานคร",
+        "storeNumber": "R733",
+        "partsAvailability": {
+          "MJXN4ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Central World",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Central World</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 256GB สีดำ",
+                "basePartNumber": "MJXN4"
+              }
+            },
+            "partNumber": "MJXN4ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          },
+          "MJXQ4ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Central World",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Central World</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 256GB สีเบอร์กันดี",
+                "basePartNumber": "MJXQ4"
+              }
+            },
+            "partNumber": "MJXQ4ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          },
+          "MJY54ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Central World",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Central World</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 2TB สีธารน้ำแข็ง",
+                "basePartNumber": "MJY54"
+              }
+            },
+            "partNumber": "MJY54ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          }
+        },
+        "address": {
+          "address": "Apple Central World",
+          "address3": "เขตปทุมวัน",
+          "address2": "4, 4/1-4/2, 4/4 ถนนราชดำริห์",
+          "postalCode": "10330"
+        },
+        "storelatitude": 13.744892,
+        "storelongitude": 100.539972,
+        "storeDistanceWithUnit": "0.66 km"
+      },
+      {
+        "storeEmail": "iconsiam@apple.com",
+        "storeName": "Iconsiam",
+        "reservationUrl": "http://www.apple.com/th/retail/iconsiam",
+        "country": "TH",
+        "city": "กรุงเทพมหานคร",
+        "storeNumber": "R728",
+        "partsAvailability": {
+          "MJXN4ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Iconsiam",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Iconsiam</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 256GB สีดำ",
+                "basePartNumber": "MJXN4"
+              }
+            },
+            "partNumber": "MJXN4ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          },
+          "MJXQ4ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Iconsiam",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Iconsiam</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 256GB สีเบอร์กันดี",
+                "basePartNumber": "MJXQ4"
+              }
+            },
+            "partNumber": "MJXQ4ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          },
+          "MJY54ZP/A": {
+            "messageTypes": {
+              "regular": {
+                "storeSearchEnabled": true,
+                "storePickupLabel": "การรับสินค้า:",
+                "storeSelectionEnabled": false,
+                "storePickupQuote": "ขณะนี้ยังไม่มีจำหน่ายที่ Apple Iconsiam",
+                "storePickupQuote2_0": "ขณะนี้ยังไม่มีจำหน่ายที่ <button type=\"button\" class=\"rf-pickup-quote-overlay-trigger as-retailavailabilitytrigger-infobutton retail-availability-search-trigger as-buttonlink as-buttonlink-inline\" data-ase-overlay=\"buac-overlay\" data-ase-click=\"show\">Apple Iconsiam</button>",
+                "storePickupLinkText": "ตรวจสอบความพร้อมในการจำหน่าย",
+                "storePickupProductTitle": "iPhone 18 Pro Max 2TB สีธารน้ำแข็ง",
+                "basePartNumber": "MJY54"
+              }
+            },
+            "partNumber": "MJY54ZP/A",
+            "pickupDisplay": "unavailable",
+            "pickupSearchQuote": "ยังไม่พร้อมให้รับสินค้า",
+            "pickupType": "บริการรับสินค้าด้านในร้าน",
+            "storePickEligible": true
+          }
+        },
+        "address": {
+          "address": "Apple Iconsiam",
+          "address3": "แขวงคลองต้นไทร เขตคลองสาน",
+          "address2": "299 ถนนเจริญนคร",
+          "postalCode": "10600"
+        },
+        "storelatitude": 13.726822,
+        "storelongitude": 100.511255,
+        "storeDistanceWithUnit": "3.45 km"
+      }
+    ],
+    "storesCount": "2 stores found near 10330"
+  }
+}
