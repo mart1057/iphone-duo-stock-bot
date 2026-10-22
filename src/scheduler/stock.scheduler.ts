@@ -31,6 +31,8 @@ const OWNER = `${hostname()}:${process.pid}`;
 export class StockScheduler {
   private isRunning = false;
   private stopped = false;
+  private started = false;
+  private generation = 0;
   private timer: NodeJS.Timeout | null = null;
   private cronTask: ScheduledTask | null = null;
   private skippedTicks = 0;
@@ -42,13 +44,28 @@ export class StockScheduler {
     private readonly rateLimit: RateLimitGuard = new RateLimitGuard(),
   ) {}
 
+  getStatusText(): string {
+    const cooldown = this.rateLimit.snapshot();
+    if (this.stopped) return '⏹ หยุดการตรวจแล้ว';
+    if (this.isRunning) return '🔎 กำลังตรวจสต็อก';
+    if (cooldown.until && cooldown.until.getTime() > Date.now()) {
+      return `⏳ พักการตรวจจาก rate limit อีก ${Math.ceil((cooldown.until.getTime() - Date.now()) / 1000)} วินาที`;
+    }
+    return env.STOCK_CHECK_CRON
+      ? `🟢 รอตรวจตามกำหนด cron: ${env.STOCK_CHECK_CRON}`
+      : `🟢 รอตรวจรอบถัดไป (เว้น ${env.STOCK_CHECK_INTERVAL_SECONDS} วินาทีหลังจบรอบ)`;
+  }
+
   async start(): Promise<void> {
+    if (this.started) return;
+    if (env.STOCK_CHECK_CRON && !cron.validate(env.STOCK_CHECK_CRON)) {
+      throw new Error(`Invalid STOCK_CHECK_CRON expression: "${env.STOCK_CHECK_CRON}"`);
+    }
+    this.started = true;
     this.stopped = false;
+    const generation = ++this.generation;
 
     if (env.STOCK_CHECK_CRON.length > 0) {
-      if (!cron.validate(env.STOCK_CHECK_CRON)) {
-        throw new Error(`Invalid STOCK_CHECK_CRON expression: "${env.STOCK_CHECK_CRON}"`);
-      }
       logger.info(`Scheduler mode: cron "${env.STOCK_CHECK_CRON}"`);
       this.cronTask = cron.schedule(env.STOCK_CHECK_CRON, () => {
         void this.tick();
@@ -61,22 +78,25 @@ export class StockScheduler {
       await this.tick();
     }
 
-    if (env.STOCK_CHECK_CRON.length === 0) this.scheduleNext();
+    if (env.STOCK_CHECK_CRON.length === 0) this.scheduleNext(generation);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.started = false;
+    this.generation += 1;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.cronTask?.stop();
     this.cronTask = null;
-    await this.repository.releaseLock(LOCK_NAME, OWNER).catch(() => undefined);
+    // An active check releases its own lock when it finishes.
+    if (!this.isRunning) await this.repository.releaseLock(LOCK_NAME, OWNER).catch(() => undefined);
   }
 
-  private scheduleNext(): void {
-    if (this.stopped) return;
+  private scheduleNext(generation: number): void {
+    if (this.stopped || generation !== this.generation) return;
     this.timer = setTimeout(() => {
-      void this.tick().finally(() => this.scheduleNext());
+      void this.tick().finally(() => this.scheduleNext(generation));
     }, env.STOCK_CHECK_INTERVAL_SECONDS * 1000);
   }
 

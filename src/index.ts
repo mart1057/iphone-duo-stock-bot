@@ -10,6 +10,7 @@ import {
 import { disconnectPrisma, prisma } from './database/prisma.js';
 import { stockScheduler } from './scheduler/stock.scheduler.js';
 import { historyScheduler } from './scheduler/history.scheduler.js';
+import { telegramCommandService } from './notification/telegram.commands.js';
 import { logger } from './utils/logger.js';
 
 const banner = async (): Promise<void> => {
@@ -58,6 +59,7 @@ const banner = async (): Promise<void> => {
 
 const shutdown = async (signal: string): Promise<void> => {
   logger.info(`Received ${signal} - shutting down`);
+  await telegramCommandService.stop();
   await stockScheduler.stop();
   await historyScheduler.stop();
   await disconnectPrisma();
@@ -80,6 +82,7 @@ const main = async (): Promise<void> => {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+  telegramCommandService.start();
   await stockScheduler.start();
   historyScheduler.start();
 };

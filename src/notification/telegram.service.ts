@@ -52,6 +52,12 @@ export class TelegramNotificationService implements NotificationChannel {
     };
   }
 
+  async reply(chatId: string, text: string): Promise<boolean> {
+    if (!this.isConfigured() || !env.telegramChatIds.includes(chatId)) return false;
+    if (env.TELEGRAM_DRY_RUN) return true;
+    return (await this.sendTo(chatId, text)).success;
+  }
+
   private async sendTo(
     chatId: string,
     text: string,

@@ -1,3 +1,4 @@
+import { env } from '../src/config/env.js';
 import { describe, expect, it, vi } from 'vitest';
 import { AppleRequestError } from '../src/apple/apple.types.js';
 import { RateLimitGuard } from '../src/scheduler/rate-limit.guard.js';
@@ -152,5 +153,45 @@ describe('adaptive cooldown in the scheduler', () => {
     await tick();
     expect(notifications.notifyRecovered).toHaveBeenCalledTimes(1); // not repeated
     vi.restoreAllMocks();
+  });
+});
+
+ describe('scheduler start and stop commands', () => {
+  it('avoids duplicate timers and does not reschedule an old run after restart', async () => {
+    vi.useFakeTimers();
+    const previous = { cron: env.STOCK_CHECK_CRON, startup: env.RUN_ON_STARTUP };
+    env.STOCK_CHECK_CRON = '';
+    env.RUN_ON_STARTUP = true;
+    let release!: () => void;
+    const pending = new Promise<StockCheckResult>((resolve) => {
+      release = () => resolve(emptyResult());
+    });
+    const stocks = { runCheck: vi.fn().mockReturnValueOnce(pending).mockResolvedValue(emptyResult()) };
+    const repository = { releaseLock: vi.fn().mockResolvedValue(undefined), acquireLock: vi.fn().mockResolvedValue(true) };
+    const scheduler = new StockScheduler(stocks as never,
+      { notify: vi.fn().mockResolvedValue(undefined) } as never, repository as never);
+    try {
+      const starting = scheduler.start();
+      await Promise.resolve();
+      await scheduler.stop();
+      expect(repository.releaseLock).not.toHaveBeenCalled();
+      await scheduler.start();
+      await scheduler.start();
+      expect(vi.getTimerCount()).toBe(1);
+      release();
+      await starting;
+      expect(vi.getTimerCount()).toBe(1);
+      await scheduler.stop();
+      await vi.advanceTimersByTimeAsync(env.STOCK_CHECK_INTERVAL_SECONDS * 2000);
+      expect(stocks.runCheck).toHaveBeenCalledTimes(1);
+      await scheduler.start();
+      expect(stocks.runCheck).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      await scheduler.stop();
+      env.STOCK_CHECK_CRON = previous.cron;
+      env.RUN_ON_STARTUP = previous.startup;
+      vi.useRealTimers();
+    }
   });
 });
