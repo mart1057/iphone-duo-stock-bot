@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config/env.js', () => ({
-  env: { telegramChatIds: ['123'], TELEGRAM_DRY_RUN: false },
+  env: { telegramChatIds: ['123'], TELEGRAM_DRY_RUN: false, STOCK_CHECK_WINDOW_ENABLED: true, STOCK_CHECK_CRON: '' },
   isTelegramConfigured: () => true,
 }));
 vi.mock('../src/scheduler/stock.scheduler.js', () => ({
@@ -30,6 +30,9 @@ describe('Telegram status commands', () => {
     await new TelegramCommandService().handleUpdate(update(text));
     expect(telegramNotificationService.reply).toHaveBeenCalledWith('123', expect.stringContaining('กำลังตรวจสต็อก'));
     expect(telegramNotificationService.reply).toHaveBeenCalledWith('123', expect.stringContaining('ตรวจล่าสุด: วันนี้'));
+    expect(telegramNotificationService.reply).toHaveBeenCalledWith('123', expect.stringContaining('05:30–22:00'));
+    expect(telegramNotificationService.reply).toHaveBeenCalledWith('123', expect.stringContaining('25–45 วินาที'));
+    expect(telegramNotificationService.reply).toHaveBeenCalledWith('123', expect.stringContaining('รอเริ่มอัตโนมัติ'));
   });
 
   it.each(['/stop', '/stop@my_bot', '/start', '/start@my_bot'])('controls checks with %s', async (text) => {

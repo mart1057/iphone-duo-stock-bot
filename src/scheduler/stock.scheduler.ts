@@ -8,6 +8,10 @@ import { stockService, type StockService } from '../stock/stock.service.js';
 import { logger } from '../utils/logger.js';
 import { RateLimitGuard } from './rate-limit.guard.js';
 
+import { logProxyToDiscord } from '../notification/proxy-log.js';
+import { checkWindow } from './check-window.js';
+import { nextPollDelay } from './poll-delay.js';
+
 const LOCK_NAME = 'stock-check';
 const OWNER = `${hostname()}:${process.pid}`;
 
@@ -47,13 +51,14 @@ export class StockScheduler {
   getStatusText(): string {
     const cooldown = this.rateLimit.snapshot();
     if (this.stopped) return '⏹ หยุดการตรวจแล้ว';
+    if (!checkWindow().open) return '🌙 พักนอกเวลาตรวจ เริ่มอีกครั้ง 05:30 น. (เวลาไทย)';
     if (this.isRunning) return '🔎 กำลังตรวจสต็อก';
     if (cooldown.until && cooldown.until.getTime() > Date.now()) {
       return `⏳ พักการตรวจจาก rate limit อีก ${Math.ceil((cooldown.until.getTime() - Date.now()) / 1000)} วินาที`;
     }
     return env.STOCK_CHECK_CRON
       ? `🟢 รอตรวจตามกำหนด cron: ${env.STOCK_CHECK_CRON}`
-      : `🟢 รอตรวจรอบถัดไป (เว้น ${env.STOCK_CHECK_INTERVAL_SECONDS} วินาทีหลังจบรอบ)`;
+      : `🟢 รอตรวจรอบถัดไป (สุ่มพัก 25–45 วินาทีหลังจบรอบ)`;
   }
 
   async start(): Promise<void> {
@@ -71,7 +76,7 @@ export class StockScheduler {
         void this.tick();
       });
     } else {
-      logger.info(`Scheduler mode: fixed delay ${env.STOCK_CHECK_INTERVAL_SECONDS}s`);
+      logger.info(`Scheduler mode: random delay 25–45s`);
     }
 
     if (env.RUN_ON_STARTUP) {
@@ -95,9 +100,17 @@ export class StockScheduler {
 
   private scheduleNext(generation: number): void {
     if (this.stopped || generation !== this.generation) return;
+    const pollDelay = nextPollDelay();
+    const cooldown = this.rateLimit.check();
+    const now = Date.now();
+    const window = checkWindow(now);
+    const normalDelay = Math.max(pollDelay * 1000, cooldown.remainingMs);
+    const delayMs = !window.open ? window.nextOpenMs - now
+      : env.STOCK_CHECK_WINDOW_ENABLED ? Math.min(normalDelay, window.closesInMs) : normalDelay;
+    logger.info(`Next stock check in ${Math.ceil(delayMs / 1000)}s`);
     this.timer = setTimeout(() => {
       void this.tick().finally(() => this.scheduleNext(generation));
-    }, env.STOCK_CHECK_INTERVAL_SECONDS * 1000);
+    }, delayMs);
   }
 
   private async enterCooldown(reason?: string): Promise<void> {
@@ -110,6 +123,7 @@ export class StockScheduler {
       return;
     }
 
+    logProxyToDiscord(`⏸ หยุดตรวจ ${Math.round(entry.cooldownMs / 60_000)} นาที จากการถูกจำกัดคำขอ\nกลับมาตรวจ ${entry.until.toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' })}`);
     logger.warn(
       `Apple rate limit - pausing checks for ${Math.round(entry.cooldownMs / 1000)}s`,
       `level=${entry.level} consecutive=${entry.consecutiveFailures}${entry.escalated ? ' (escalated)' : ''}`,
@@ -136,7 +150,7 @@ export class StockScheduler {
   }
 
   private async tick(): Promise<void> {
-    if (this.stopped) return;
+    if (this.stopped || !checkWindow().open) return;
 
     if (this.isRunning) {
       this.skippedTicks += 1;
@@ -169,13 +183,12 @@ export class StockScheduler {
       }
 
       const result = await this.stocks.runCheck();
-      await this.notifications.notify(result);
-
       if (result.rateLimited) {
         await this.enterCooldown(result.errors[0]);
       } else {
         await this.markHealthy();
       }
+      await this.notifications.notify(result);
     } catch (error) {
       // A failed cycle must never kill the scheduler.
       logger.error('Stock check cycle failed', error);

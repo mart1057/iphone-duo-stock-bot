@@ -108,7 +108,7 @@ export class NotificationService {
     await this.sendSystemAlert(
       '✅ ระบบกลับมาตรวจแล้ว',
       'Apple ตอบกลับปกติ - กลับสู่รอบตรวจตามปกติ',
-      [['รอบตรวจ', `ทุก ${env.STOCK_CHECK_INTERVAL_SECONDS} วินาที`]],
+      [['รอบตรวจ', `สุ่มพัก 25–45 วินาที`]],
       'ok',
     );
   }

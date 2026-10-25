@@ -55,9 +55,17 @@ export class AppleAvailabilityCollector {
       `variants=${variants.length} postcodes=${env.applePostalCodes.length} concurrency=${env.MAX_CONCURRENT_REQUESTS}`,
     );
 
-    const results = await mapWithLimit(jobs, env.MAX_CONCURRENT_REQUESTS, async (job) => {
-      const response = await this.client.getPickupMessage(job.parts, job.postalCode);
-      return parsePickupMessage(response, variantMap, checkedAt);
+    // Stop the remaining requests in this sweep as soon as Apple pushes back.
+    let blockedError: unknown;
+    const results = await mapWithLimit(jobs, 1, async (job) => {
+      if (blockedError) throw blockedError;
+      try {
+        const response = await this.client.getPickupMessage(job.parts, job.postalCode);
+        return parsePickupMessage(response, variantMap, checkedAt);
+      } catch (error) {
+        if (isRateLimitError(error)) blockedError = error;
+        throw error;
+      }
     });
 
     const stocks: ProductStock[] = [];

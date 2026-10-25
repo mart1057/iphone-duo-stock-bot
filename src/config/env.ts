@@ -28,9 +28,19 @@ const schema = z.object({
 
   /// Discord incoming webhook(s) - free, no bot registration needed.
   DISCORD_WEBHOOK_URL: z.string().default(''),
+  DISCORD_PROXY_LOG_ENABLED: booleanish.default('true'),
   DISCORD_DRY_RUN: booleanish.default('false'),
 
   APPLE_BASE_URL: z.string().url().default('https://www.apple.com/th/'),
+  APPLE_PROXY_URL: z.string().default('').refine((value) => {
+    if (!value) return true;
+    try {
+      const url = new URL(value);
+      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+    } catch { return false; }
+  }, 'Use an HTTP(S) proxy URL without credentials'),
+  DATAIMPULSE_USERNAME: z.string().default(''),
+  DATAIMPULSE_PASSWORD: z.string().default(''),
   APPLE_PRODUCT_URL: z
     .string()
     .url()
@@ -40,6 +50,7 @@ const schema = z.object({
   APPLE_MAX_PARTS_PER_REQUEST: z.coerce.number().int().min(1).max(50).default(16),
   APPLE_CATALOG_TTL_MINUTES: z.coerce.number().int().min(1).default(1440),
 
+  STOCK_CHECK_WINDOW_ENABLED: booleanish.default('true'),
   STOCK_CHECK_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(30),
   STOCK_CHECK_CRON: z.string().default(''),
   RUN_ON_STARTUP: booleanish.default('true'),
@@ -49,9 +60,9 @@ const schema = z.object({
   RETRY_BASE_DELAY_MS: z.coerce.number().int().min(50).default(500),
   MAX_CONCURRENT_REQUESTS: z.coerce.number().int().min(1).max(20).default(3),
 
-  RATE_LIMIT_TRIGGER_FAILURES: z.coerce.number().int().min(1).max(10).default(2),
-  RATE_LIMIT_COOLDOWN_BASE_SECONDS: z.coerce.number().int().min(10).default(120),
-  RATE_LIMIT_COOLDOWN_MAX_SECONDS: z.coerce.number().int().min(60).default(1800),
+  RATE_LIMIT_TRIGGER_FAILURES: z.coerce.number().int().min(1).max(10).default(1),
+  RATE_LIMIT_COOLDOWN_BASE_SECONDS: z.coerce.number().int().min(10).default(900),
+  RATE_LIMIT_COOLDOWN_MAX_SECONDS: z.coerce.number().int().min(60).default(900),
   RATE_LIMIT_ALERT_ENABLED: booleanish.default('true'),
   /// Floor between two system notices (cooldown / recovery). Without this a
   /// flapping upstream ping-pongs cooldown -> recover -> cooldown and burns
@@ -62,7 +73,12 @@ const schema = z.object({
   LOCK_TTL_SECONDS: z.coerce.number().int().min(30).default(300),
 });
 
-const parsed = schema.safeParse(process.env);
+const parsed = schema.superRefine((config, context) => {
+  if (config.APPLE_PROXY_URL && (!config.DATAIMPULSE_USERNAME || !config.DATAIMPULSE_PASSWORD)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['APPLE_PROXY_URL'],
+      message: 'Proxy requires DATAIMPULSE_USERNAME and DATAIMPULSE_PASSWORD' });
+  }
+}).safeParse(process.env);
 
 if (!parsed.success) {
   const issues = parsed.error.issues

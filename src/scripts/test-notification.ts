@@ -164,7 +164,7 @@ const main = async (): Promise<void> => {
   const headline = 'ถ้าเห็นข้อความนี้ แปลว่าช่องทางนี้พร้อมใช้งานแล้ว';
   const rows: Array<[string, string]> = [
     ['สถานะ', 'ทดสอบระบบ ไม่ใช่การแจ้งเตือนสต็อกจริง'],
-    ['รอบตรวจ', `ทุก ${process.env.STOCK_CHECK_INTERVAL_SECONDS ?? '30'} วินาที`],
+    ['รอบตรวจ', `สุ่มพัก 25–45 วินาที`],
   ];
 
   const result = await channelDispatcher.push({

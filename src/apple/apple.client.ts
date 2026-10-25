@@ -1,8 +1,12 @@
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
+import { checkWindow } from '../scheduler/check-window.js';
+import { logProxyToDiscord } from '../notification/proxy-log.js';
+import { createAppleProxy, rotatingProxyUsername } from './apple.proxy.js';
 import {
   AppleRequestError,
+  RATE_LIMIT_STATUSES,
   pickupMessageResponseSchema,
   type PickupMessageResponse,
 } from './apple.types.js';
@@ -13,7 +17,6 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 
 const PICKUP_MESSAGE_PATH = '/th/shop/retail/pickup-message';
-
 /// 4xx (other than 408/429) will not become healthy by retrying.
 const isRetryableError = (error: unknown): boolean => {
   if (error instanceof AppleRequestError) return error.retryable;
@@ -31,29 +34,48 @@ const buildUrl = (parts: readonly string[], postalCode: string): string => {
 };
 
 const request = async (url: string, accept: string): Promise<Response> => {
-  const response = await fetch(url, {
-    method: 'GET',
-    redirect: 'follow',
-    signal: AbortSignal.timeout(env.REQUEST_TIMEOUT_MS),
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: accept,
-      'Accept-Language': 'th-TH,th;q=0.9,en;q=0.8',
-      Referer: env.APPLE_PRODUCT_URL,
-    },
-  });
-
-  if (!response.ok) {
-    const retryable =
-      response.status >= 500 || response.status === 408 || response.status === 429;
-    throw new AppleRequestError(
-      `Apple request failed status=${response.status} url=${url}`,
-      response.status,
-      retryable,
-    );
+  if (!checkWindow().open) {
+    throw new AppleRequestError('Outside daily stock-check hours (05:30–22:00 Asia/Bangkok)', undefined, false);
   }
+  // A fresh tunnel per HTTP attempt prevents a keep-alive connection from
+  // retaining the previous exit IP on DataImpulse's rotating port 823.
+  const proxy = env.APPLE_PROXY_URL
+    ? createAppleProxy(env.APPLE_PROXY_URL, rotatingProxyUsername(env.DATAIMPULSE_USERNAME), env.DATAIMPULSE_PASSWORD)
+    : undefined;
+  const route = proxy ? 'DataImpulse rotating | IP ปลายทางไม่ทราบ (ไม่ล็อก session)' : 'direct';
+  const endpoint = new URL(url).pathname;
+  try {
+    const response = await fetch(url, {
+      ...(proxy ? { dispatcher: proxy } : {}),
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(env.REQUEST_TIMEOUT_MS),
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: accept,
+        'Accept-Language': 'th-TH,th;q=0.9,en;q=0.8',
+        Referer: env.APPLE_PRODUCT_URL,
+      },
+    }).catch((error: unknown) => {
+      logProxyToDiscord(`❌ ${endpoint} | ${route}\nเชื่อมต่อผิดพลาด/หมดเวลา ยังไม่ทราบผลจาก Apple`);
+      throw error;
+    });
 
-  return response;
+    logProxyToDiscord(`${response.ok ? '✅ Apple ตอบสำเร็จ' : `⚠️ Apple ตอบ HTTP ${response.status}`} | ${endpoint}\n${route}${RATE_LIMIT_STATUSES.has(response.status) ? '\nไม่ลองซ้ำทันที ส่งต่อให้ระบบพัก' : ''}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      const retryable = !RATE_LIMIT_STATUSES.has(response.status) &&
+        (response.status >= 500 || response.status === 408);
+      throw new AppleRequestError(
+        `Apple request failed status=${response.status} url=${url}`,
+        response.status, retryable,
+      );
+    }
+    return response;
+  } finally {
+    // Graceful close waits for the caller to consume the response body.
+    if (proxy) void proxy.close().catch(() => proxy.destroy()).catch(() => undefined);
+  }
 };
 
 export class AppleClient {

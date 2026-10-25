@@ -7,6 +7,11 @@ export default defineConfig({
     // The bot validates its environment at import time; give tests a valid one.
     env: {
       NODE_ENV: 'test',
+      STOCK_CHECK_WINDOW_ENABLED: 'false',
+      DISCORD_PROXY_LOG_ENABLED: 'false',
+      APPLE_PROXY_URL: '',
+      DATAIMPULSE_USERNAME: '',
+      DATAIMPULSE_PASSWORD: '',
       LOG_LEVEL: 'error',
       TZ: 'Asia/Bangkok',
       DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/iphone_duo_stock_bot_test',

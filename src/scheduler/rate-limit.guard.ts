@@ -28,6 +28,7 @@ export interface RateLimitGuardOptions {
   triggerFailures: number;
   baseCooldownMs: number;
   maxCooldownMs: number;
+  randomize?: boolean;
 }
 
 /**
@@ -52,6 +53,7 @@ export class RateLimitGuard {
 
   constructor(
     private readonly options: RateLimitGuardOptions = {
+      randomize: true,
       triggerFailures: env.RATE_LIMIT_TRIGGER_FAILURES,
       baseCooldownMs: env.RATE_LIMIT_COOLDOWN_BASE_SECONDS * 1000,
       maxCooldownMs: env.RATE_LIMIT_COOLDOWN_MAX_SECONDS * 1000,
@@ -83,7 +85,10 @@ export class RateLimitGuard {
     const entered = !this.active;
     if (!entered) this.level += 1;
 
-    const cooldownMs = Math.min(
+    const cooldownMs = this.options.randomize
+      ? this.options.baseCooldownMs + Math.floor(Math.random() *
+          (Math.max(this.options.baseCooldownMs, this.options.maxCooldownMs) - this.options.baseCooldownMs + 1))
+      : Math.min(
       this.options.baseCooldownMs * 2 ** this.level,
       this.options.maxCooldownMs,
     );

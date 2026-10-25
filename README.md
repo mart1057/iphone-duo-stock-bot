@@ -387,6 +387,12 @@ APPLE_MODEL_FILTER=iPhone 18 Pro Max
 
 ## 11. วิธีเปลี่ยน polling interval
 
+อัปเดต: โหมด interval สุ่มพัก 25–45 วินาทีหลังจบรอบ ค่า `STOCK_CHECK_INTERVAL_SECONDS` เดิมไม่มีผลแล้ว ส่วน cron ยังใช้ได้เมื่อกำหนดไว้
+
+เมื่อเจอ 403/429/503/541 จะไม่ retry ในรอบนั้น และหยุดคำขอที่เหลือ ค่าเริ่มต้นพักทันทีตั้งแต่ครั้งแรก 15 นาที (900 วินาที) ก่อนลองใหม่ ตั้งผ่าน `RATE_LIMIT_TRIGGER_FAILURES=1`, `RATE_LIMIT_COOLDOWN_BASE_SECONDS=900`, `RATE_LIMIT_COOLDOWN_MAX_SECONDS=900`
+
+ตัวอย่าง interval แบบคงที่ด้านล่างเป็นพฤติกรรมเดิม:
+
 ```env
 STOCK_CHECK_INTERVAL_SECONDS=15     # ถี่ขึ้น
 STOCK_CHECK_INTERVAL_SECONDS=60     # ห่างขึ้น
@@ -516,10 +522,9 @@ Bot ยิง **1 request ต่อรอบ** (16 part numbers ใน request �
 แต่ถ้า Apple ปฏิเสธ (`403` / `429` / `503` / `541`) bot จะ **ถอยให้อัตโนมัติ** แทนที่จะยิงต่อ:
 
 ```
-ปฏิเสธครั้งที่ 1  → ทน ยังไม่พัก
-ปฏิเสธครั้งที่ 2  → พัก 2 นาที      + ส่ง LINE แจ้ง 1 ครั้ง
-ยังโดนอีก        → 4 → 8 → 16 → 30 นาที (เพดาน)
-ตอบปกติครั้งแรก  → รีเซ็ตกลับ 30 วินาที + ส่ง LINE แจ้งว่ากลับมาแล้ว
+ปฏิเสธครั้งแรก   → พัก 15 นาที
+ยังโดนอีก        → พัก 15 นาทีทุกครั้ง
+ตอบปกติครั้งแรก  → กลับมาสุ่มพัก 25–45 วินาทีหลังจบรอบ
 ```
 
 - ระหว่างพัก **ไม่ยิง request เลย** (tick ถูกข้าม)
@@ -636,3 +641,51 @@ CAPTCHA, authentication หรือ security control ใด ๆ
 
 ใช้ `/stop` เพื่อหยุดตรวจรอบใหม่ (รอบที่กำลังตรวจจะทำจนจบ) และ `/start` เพื่อเปิดตรวจตามกำหนดอีกครั้ง โดยตรวจทันทีถ้า `RUN_ON_STARTUP=true` และยังอยู่ภายใต้ cooldown เดิม
 คำสั่งมีผลกับบอต instance นี้ และทุกแชตที่ได้รับอนุญาตใช้ร่วมกัน การรีสตาร์ตโปรเซสจะเปิดตรวจตามปกติ
+
+
+### DataImpulse residential proxy
+
+คำขอ Apple ทั้งหน้า catalog และ pickup JSON รองรับ DataImpulse HTTP(S) proxy
+โดยช่องแจ้งเตือนยังใช้เครือข่ายเดิม ตั้งค่าใน `.env` (ห้าม commit credentials):
+
+```env
+# คัดลอก proxy login/password จาก DataImpulse dashboard ไม่ใช่รหัสบัญชี
+DATAIMPULSE_USERNAME=YOUR_PROXY_LOGIN
+DATAIMPULSE_PASSWORD=YOUR_PROXY_PASSWORD
+# เปิดหลังกรอก credentials ครบ: session ID ผ่าน port 823
+APPLE_PROXY_URL=http://gw.dataimpulse.com:823
+APPLE_PROXY_MAX_ROTATIONS=3
+```
+
+DataImpulse ระบุ HTTP rotating port เป็น 823 และ sticky ports เป็น 10000–20000:
+https://docs.dataimpulse.com/proxies/protocols
+ใช้ gateway/port ที่ dashboard แสดงหากแตกต่างจากตัวอย่าง
+ใช้ rotating port 823 โดยไม่เติม `sessid` และเปิด tunnel ใหม่ทุกคำขอ
+เพื่อให้ DataImpulse เลือก IP ขาออกต่อคำขอ (IP อาจซ้ำได้)
+เมื่อเจอ 403/429/503/541 ไม่ retry ทันที และพัก 15 นาทีตามเดิม
+รอบปกติสุ่มพัก 25–45 วินาที
+หาก proxy ล้มเหลว คำขอจะรายงานข้อผิดพลาด ไม่ fallback ไป direct
+ปิด proxy โดยล้าง `APPLE_PROXY_URL` แล้ว restart
+
+เมื่อใช้ Docker ต้อง rebuild/recreate เพื่อรับ dependency, source และ environment ใหม่:
+
+```bash
+docker compose up -d --build bot
+```
+
+ยังต้องทดสอบด้วยบัญชีจริงเพื่อยืนยันว่า Apple ไทยเข้าถึงได้และวัดอัตรา 541
+การรองรับ proxy ไม่ได้รับประกันว่าจะไม่ถูก Apple จำกัด
+
+
+ตั้ง `DISCORD_PROXY_LOG_ENABLED=true` เพื่อรับ log ผลคำขอและเวลาพักใน Discord
+โหมด rotating ไม่แสดง IP จาก ipify เพราะเป็นคนละคำขอกับ Apple และอาจได้คนละ IP
+จึงแสดงว่า IP ปลายทางไม่ทราบ และไม่ส่งคำขอตรวจ IP เพิ่ม
+Discord log ส่งเป็นคิวเบื้องหลังสูงสุด 100 รายการ และอาจข้ามเมื่อคิวเต็ม
+
+
+เปิด `STOCK_CHECK_WINDOW_ENABLED=true` (ค่าเริ่มต้น) เพื่อเช็กเฉพาะทุกวัน
+05:30–22:00 เวลา Asia/Bangkok โดย 22:00 ไม่เริ่มคำขอใหม่
+นอกเวลารอถึง 05:30 อัตโนมัติ และไม่โหลด catalog จาก Apple ตอนเปิดบอต
+ตรวจซ้ำก่อน HTTP ทุก attempt เพื่อกัน retry ที่ข้ามเวลา 22:00
+คำขอที่เริ่มก่อน 22:00 อาจจบหลังเวลาปิดได้ ส่วนคำสั่ง Telegram ยังใช้ได้
+ต้องเปิด process และเครื่องให้ทำงานอยู่ จึงเริ่มรอบเช้าอัตโนมัติได้

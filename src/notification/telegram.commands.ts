@@ -36,6 +36,16 @@ export class TelegramCommandService {
     if (!/^(?:\/(?:status|start|stop|help)(?:@[a-z0-9_]+)?|status|สถานะ|เช็คสถานะ|เช็กสถานะ|สถานะการเช็ค)$/.test(text)) return;
 
     const command = text.split('@')[0];
+    const schedule = [
+      env.STOCK_CHECK_WINDOW_ENABLED
+        ? '🕠 เวลาตรวจ: ทุกวัน 05:30–22:00 น. (เวลาไทย)'
+        : '🕐 เวลาตรวจ: ตลอดวัน',
+      env.STOCK_CHECK_CRON
+        ? `รอบตรวจ: cron ${env.STOCK_CHECK_CRON}`
+        : 'รอบตรวจ: สุ่มพัก 25–45 วินาทีหลังจบรอบ',
+      'นอกเวลาตรวจจะไม่ส่งคำขอ Apple และรอเริ่มอัตโนมัติเมื่อถึงเวลา',
+    ].filter((line) => env.STOCK_CHECK_WINDOW_ENABLED || !line.startsWith('นอกเวลา')).join('\n');
+    const status = `${stockScheduler.getStatusText()}\n${schedule}`;
     if (command === '/stop' || command === '/start') {
       try {
         if (command === '/stop') {
@@ -44,7 +54,7 @@ export class TelegramCommandService {
           await stockScheduler.start();
         }
         await telegramNotificationService.reply(chatId,
-          `${stockScheduler.getStatusText()}\n${command === '/stop'
+          `${status}\n${command === '/stop'
             ? 'หยุดตรวจรอบใหม่แล้ว หากมีรอบที่กำลังตรวจจะทำจนจบ\nพิมพ์ /start เพื่อเริ่มตรวจอีกครั้ง'
             : 'เปิดการตรวจตามกำหนดแล้ว\nพิมพ์ /stop เพื่อหยุดตรวจ'}`);
       } catch {
@@ -57,9 +67,9 @@ export class TelegramCommandService {
     let reply: string;
     try {
       const snapshot = await readStatus();
-      reply = `${stockScheduler.getStatusText()}\n\n${buildStatusMessage(snapshot).text}\n\nข้อมูลจากการตรวจล่าสุด (ไม่ได้สั่งตรวจใหม่)\nพิมพ์ /status เพื่อดูสถานะ, /stop เพื่อหยุดตรวจ, /start เพื่อเริ่มตรวจ`;
+      reply = `${status}\n\n${buildStatusMessage(snapshot).text}\n\nข้อมูลจากการตรวจล่าสุด (ไม่ได้สั่งตรวจใหม่)\nพิมพ์ /status เพื่อดูสถานะ, /stop เพื่อหยุดตรวจ, /start เพื่อเริ่มตรวจ`;
     } catch {
-      reply = `${stockScheduler.getStatusText()}\n\nอ่านผลตรวจล่าสุดไม่ได้ กรุณาลองใหม่ภายหลัง`;
+      reply = `${status}\n\nอ่านผลตรวจล่าสุดไม่ได้ กรุณาลองใหม่ภายหลัง`;
       logger.error('Telegram status query failed');
     }
     await telegramNotificationService.reply(chatId, reply);
