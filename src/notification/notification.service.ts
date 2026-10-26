@@ -28,7 +28,7 @@ export class NotificationService {
   ) {}
 
   /**
-   * Sends restock alerts once to LINE and twice to other channels, three
+   * Sends restock alerts twice to every channel, three
    * seconds apart. Each copy contains
    * every new-in-stock item and gets its own delivery log and retry key.
    */
@@ -59,7 +59,7 @@ export class NotificationService {
     for (let copy = 1; copy <= 2; copy += 1) {
       if (copy === 2) await this.pause(3000);
       logger.info(`Sending stock alert copy ${copy}/2`);
-      // Transport retries reuse the key; LINE skips the intentional reminder.
+      // Transport retries reuse the key for each intentional copy.
       try {
         const pushResult = await this.channels.push(
           copy === 2 ? { ...message, stockReminder: true } : message,
@@ -104,13 +104,16 @@ export class NotificationService {
 
   async notifyRecovered(): Promise<void> {
     if (!env.RATE_LIMIT_ALERT_ENABLED) return;
-
-    await this.sendSystemAlert(
-      '✅ ระบบกลับมาตรวจแล้ว',
-      'Apple ตอบกลับปกติ - กลับสู่รอบตรวจตามปกติ',
-      [['รอบตรวจ', `สุ่มพัก 25–45 วินาที`]],
-      'ok',
-    );
+    // The scheduler calls this once per recovery. Bypass the failure throttle
+    // so a short cooldown cannot hide the return to normal.
+    const title = '✅ ระบบกลับมาตรวจแล้ว';
+    const headline = 'Apple ตอบกลับปกติ - กลับสู่รอบตรวจตามปกติ';
+    const result = await this.channels.push({
+      kind: 'system',
+      flex: buildSystemMessage(title, headline, [], 'ok'),
+      text: buildSystemPlainText(title, headline, []),
+    });
+    if (!result.success) logger.error('Recovery alert delivered to no channel', result.error);
   }
 
   /**

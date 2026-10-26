@@ -16,6 +16,9 @@ import {
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 
+// Shared across requests: normal checks remain silent until a failed proxy recovers.
+let proxyFailed = false;
+
 const PICKUP_MESSAGE_PATH = '/th/shop/retail/pickup-message';
 /// 4xx (other than 408/429) will not become healthy by retrying.
 const isRetryableError = (error: unknown): boolean => {
@@ -57,11 +60,17 @@ const request = async (url: string, accept: string): Promise<Response> => {
         Referer: env.APPLE_PRODUCT_URL,
       },
     }).catch((error: unknown) => {
-      logProxyToDiscord(`❌ ${endpoint} | ${route}\nเชื่อมต่อผิดพลาด/หมดเวลา ยังไม่ทราบผลจาก Apple`);
+      if (proxy) {
+        proxyFailed = true;
+        logProxyToDiscord(`❌ ${endpoint} | ${route}\nเชื่อมต่อผิดพลาด/หมดเวลา ยังไม่ทราบผลจาก Apple`);
+      }
       throw error;
     });
 
-    logProxyToDiscord(`${response.ok ? '✅ Apple ตอบสำเร็จ' : `⚠️ Apple ตอบ HTTP ${response.status}`} | ${endpoint}\n${route}${RATE_LIMIT_STATUSES.has(response.status) ? '\nไม่ลองซ้ำทันที ส่งต่อให้ระบบพัก' : ''}`);
+    if (proxy && response.status === 407) {
+      proxyFailed = true;
+      logProxyToDiscord(`❌ พร็อกซีปฏิเสธการยืนยันตัวตน (HTTP 407) | ${endpoint}\n${route}`);
+    }
     if (!response.ok) {
       await response.body?.cancel();
       const retryable = !RATE_LIMIT_STATUSES.has(response.status) &&
@@ -70,6 +79,10 @@ const request = async (url: string, accept: string): Promise<Response> => {
         `Apple request failed status=${response.status} url=${url}`,
         response.status, retryable,
       );
+    }
+    if (proxy && proxyFailed) {
+      proxyFailed = false;
+      logProxyToDiscord(`✅ พร็อกซีกลับมาเชื่อมต่อปกติ | ${endpoint}\n${route}`);
     }
     return response;
   } finally {

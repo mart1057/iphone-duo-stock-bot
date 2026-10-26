@@ -45,6 +45,15 @@ describe('ChannelDispatcher', () => {
     },
   );
 
+  it('announces recovery even immediately after a rate-limit alert', async () => {
+    const discord = channel('discord');
+    const service = new NotificationService(new ChannelDispatcher([discord]));
+    await service.notifyRateLimited({ cooldownMs: 120_000, until: new Date(), consecutiveFailures: 2, escalated: false });
+    await service.notifyRecovered();
+    expect(discord.send).toHaveBeenCalledTimes(2);
+    expect(discord.send.mock.calls[1]![0].text).toContain('ระบบกลับมาตรวจแล้ว');
+  });
+
   it('silently skips system notices when only Telegram is configured', async () => {
     const telegram = channel('telegram');
     const result = await new ChannelDispatcher([telegram]).push({ ...message, kind: 'system' });
@@ -53,22 +62,22 @@ describe('ChannelDispatcher', () => {
     expect(result).toEqual({ success: true, messageId: null, results: [] });
   });
 
-  it('sends stock once to LINE and preserves reminders on other channels', async () => {
+  it('sends both stock copies to every channel', async () => {
     const line = channel('line');
     const telegram = channel('telegram');
     const discord = channel('discord');
     const dispatcher = new ChannelDispatcher([line, telegram, discord]);
     await dispatcher.push(message);
     await dispatcher.push({ ...message, stockReminder: true });
-    expect(line.send).toHaveBeenCalledTimes(1);
+    expect(line.send).toHaveBeenCalledTimes(2);
     expect(telegram.send).toHaveBeenCalledTimes(2);
     expect(discord.send).toHaveBeenCalledTimes(2);
   });
 
-  it('silently skips LINE-only reminders and system notices', async () => {
+  it('silently skips LINE-only system notices', async () => {
     const line = channel('line');
     const dispatcher = new ChannelDispatcher([line]);
-    for (const extra of [{ stockReminder: true }, { kind: 'system' as const }]) {
+    for (const extra of [{ kind: 'system' as const }]) {
       expect(await dispatcher.push({ ...message, ...extra })).toEqual({
         success: true, messageId: null, results: [],
       });
@@ -174,9 +183,9 @@ describe('system alert throttle', () => {
     const service = new NotificationService(channels as never, repo() as never, stubSnapshot);
 
     await service.notifyRateLimited(cooldown);
-    await service.notifyRecovered();
     await service.notifyRateLimited(cooldown);
-    await service.notifyRecovered();
+    await service.notifyRateLimited(cooldown);
+    await service.notifyRateLimited(cooldown);
 
     expect(channels.push).toHaveBeenCalledTimes(1);
   });
@@ -189,11 +198,11 @@ describe('system alert throttle', () => {
     const service = new NotificationService(channels as never, repo() as never, stubSnapshot);
 
     await service.notifyRateLimited(cooldown);
-    await service.notifyRecovered();
-    await service.notifyRecovered();
+    await service.notifyRateLimited(cooldown);
+    await service.notifyRateLimited(cooldown);
 
     vi.setSystemTime(new Date('2026-09-20T10:31:00.000Z'));
-    await service.notifyRecovered();
+    await service.notifyRateLimited(cooldown);
 
     expect(channels.push).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(channels.push.mock.calls[1])).toContain('แจ้งเตือนที่ข้ามไป');
@@ -207,7 +216,7 @@ describe('system alert throttle', () => {
     const service = new NotificationService(channels as never, repo() as never, stubSnapshot);
 
     await service.notifyRateLimited(cooldown);
-    await service.notifyRecovered();
+    await service.notifyRateLimited(cooldown);
     await service.notifyRateLimited(cooldown);
 
     expect(channels.push).toHaveBeenCalledTimes(1);
@@ -223,11 +232,11 @@ describe('system alert throttle', () => {
     const service = new NotificationService({ push } as never, repo() as never, stubSnapshot);
 
     await service.notifyRateLimited(cooldown); // attempted, failed
-    await service.notifyRecovered(); // suppressed -> count 1
+    await service.notifyRateLimited(cooldown); // suppressed -> count 1
 
     vi.setSystemTime(new Date('2026-09-20T10:31:00.000Z'));
     push.mockResolvedValue({ success: true, messageId: 'm1' });
-    await service.notifyRecovered();
+    await service.notifyRateLimited(cooldown);
 
     expect(JSON.stringify(push.mock.calls[1])).toContain('แจ้งเตือนที่ข้ามไป');
     vi.useRealTimers();

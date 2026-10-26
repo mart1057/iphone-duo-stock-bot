@@ -8,7 +8,6 @@ import { stockService, type StockService } from '../stock/stock.service.js';
 import { logger } from '../utils/logger.js';
 import { RateLimitGuard } from './rate-limit.guard.js';
 
-import { logProxyToDiscord } from '../notification/proxy-log.js';
 import { checkWindow } from './check-window.js';
 import { nextPollDelay } from './poll-delay.js';
 
@@ -123,7 +122,6 @@ export class StockScheduler {
       return;
     }
 
-    logProxyToDiscord(`⏸ หยุดตรวจ ${Math.round(entry.cooldownMs / 60_000)} นาที จากการถูกจำกัดคำขอ\nกลับมาตรวจ ${entry.until.toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' })}`);
     logger.warn(
       `Apple rate limit - pausing checks for ${Math.round(entry.cooldownMs / 1000)}s`,
       `level=${entry.level} consecutive=${entry.consecutiveFailures}${entry.escalated ? ' (escalated)' : ''}`,

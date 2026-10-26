@@ -10,7 +10,7 @@ import type { FlexMessage } from './line.flex.js';
 export interface OutboundMessage {
   /// Automatic system notices are excluded from LINE and Telegram.
   kind?: 'stock' | 'system';
-  /// Intentional second stock copy; LINE skips this reminder.
+  /// Intentional second stock copy for every channel.
   stockReminder?: boolean;
   /// Channels to skip for this message (e.g. ['line'] for test sends, to save quota).
   excludeChannels?: readonly string[];

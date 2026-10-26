@@ -83,7 +83,6 @@ export class ChannelDispatcher {
     const recipients = active.filter(
       (channel) =>
         !(message.kind === 'system' && ['line', 'telegram'].includes(channel.name)) &&
-        !(message.stockReminder && channel.name === 'line') &&
         !(message.excludeChannels?.includes(channel.name) ?? false),
     );
     // Some messages intentionally have no eligible recipient.
