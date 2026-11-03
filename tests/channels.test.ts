@@ -62,16 +62,23 @@ describe('ChannelDispatcher', () => {
     expect(result).toEqual({ success: true, messageId: null, results: [] });
   });
 
-  it('sends both stock copies to every channel', async () => {
+  it('sends only the first stock copy to LINE while preserving other channels', async () => {
     const line = channel('line');
     const telegram = channel('telegram');
     const discord = channel('discord');
     const dispatcher = new ChannelDispatcher([line, telegram, discord]);
     await dispatcher.push(message);
     await dispatcher.push({ ...message, stockReminder: true });
-    expect(line.send).toHaveBeenCalledTimes(2);
+    expect(line.send).toHaveBeenCalledTimes(1);
     expect(telegram.send).toHaveBeenCalledTimes(2);
     expect(discord.send).toHaveBeenCalledTimes(2);
+  });
+
+  it('silently skips the second stock copy when only LINE is configured', async () => {
+    const line = channel('line');
+    const result = await new ChannelDispatcher([line]).push({ ...message, stockReminder: true });
+    expect(line.send).not.toHaveBeenCalled();
+    expect(result).toEqual({ success: true, messageId: null, results: [] });
   });
 
   it('silently skips LINE-only system notices', async () => {

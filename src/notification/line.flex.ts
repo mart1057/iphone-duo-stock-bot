@@ -1,4 +1,4 @@
-import { env } from '../config/env.js';
+import { productUrlFor } from '../config/env.js';
 import type { StockTransition } from '../stock/stock.types.js';
 import { formatClock, formatThaiDateTime } from '../utils/datetime.js';
 
@@ -107,19 +107,53 @@ export const buildStockBubble = (transition: StockTransition): FlexBubble => {
       type: 'box',
       layout: 'vertical',
       paddingAll: '12px',
-      contents: [storeButton(env.APPLE_PRODUCT_URL)],
+      contents: [storeButton(skuPageFor(stock.partNumber))],
     },
   };
 };
 
-const summaryLine = (transition: StockTransition, index: number): FlexComponent => ({
+/// "iPhone Duo / iPhone 18 Pro Max" - every model in the alert, in order.
+/**
+ * The link people tap in a stock alert, in the store.apple.com form:
+ *   https://www.apple.com/th/shop/buy-iphone/iphone-duo
+ *   -> https://store.apple.com/th/buy-iphone/iphone-duo
+ * Display only - the URL the checker requests (APPLE_PRODUCTS) is untouched.
+ */
+export const toStoreLink = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)apple\.com$/.test(parsed.hostname)) return url;
+    const path = parsed.pathname.replace(/^\/([a-z]{2}(?:-[a-z]{2})?\/)?shop\//i, '/$1');
+    return `https://store.apple.com${path}`;
+  } catch {
+    return url;
+  }
+};
+
+export const alertLinkFor = (model: string | undefined): string => toStoreLink(productUrlFor(model));
+
+/// Apple's own page for one exact SKU (colour + storage), e.g.
+/// https://www.apple.com/th/xc/product/MK2D4ZP/A - display only.
+export const skuPageFor = (partNumber: string): string => `https://www.apple.com/th/xc/product/${partNumber}`;
+
+/// `[label](url)`: Telegram shows it as a tappable label (converted to HTML on
+/// send) and Discord renders it natively, so long URLs never clutter the alert.
+export const mdLink = (label: string, partNumber?: string): string =>
+  partNumber ? `[${label}](${skuPageFor(partNumber)})` : label;
+
+export const TAP_HINT = '👉 แตะชื่อรุ่นเพื่อเปิดหน้าจอง';
+
+export const modelsOf = (transitions: readonly { stock: { model: string } }[]): string =>
+  [...new Set(transitions.map((t) => t.stock.model))].join(' / ') || 'iPhone';
+
+const summaryLine = (transition: StockTransition, index: number, multi = false): FlexComponent => ({
   type: 'box',
   layout: 'vertical',
   margin: 'md',
   contents: [
     {
       type: 'text',
-      text: `${index + 1}. ${transition.stock.colorTh} · ${transition.stock.storage}`,
+      text: `${index + 1}. ${multi ? `${transition.stock.model} · ` : ''}${transition.stock.colorTh} · ${transition.stock.storage}`,
       weight: 'bold',
       size: 'sm',
       color: DARK,
@@ -137,7 +171,8 @@ const summaryLine = (transition: StockTransition, index: number): FlexComponent 
 
 export const buildSummaryBubble = (transitions: readonly StockTransition[]): FlexBubble => {
   const checkedAt = transitions[0]?.stock.checkedAt ?? new Date();
-  const model = transitions[0]?.stock.model ?? env.APPLE_MODEL_FILTER;
+  const model = modelsOf(transitions);
+  const multi = new Set(transitions.map((t) => t.stock.model)).size > 1;
   const shown = transitions.slice(0, 20);
   const rest = transitions.length - shown.length;
 
@@ -152,7 +187,7 @@ export const buildSummaryBubble = (transitions: readonly StockTransition[]): Fle
       margin: 'sm',
     },
     { type: 'separator', margin: 'md' },
-    ...shown.map(summaryLine),
+    ...shown.map((transition, index) => summaryLine(transition, index, multi)),
   ];
 
   if (rest > 0) {
@@ -168,7 +203,7 @@ export const buildSummaryBubble = (transitions: readonly StockTransition[]): Fle
       type: 'box',
       layout: 'vertical',
       paddingAll: '12px',
-      contents: [storeButton(env.APPLE_PRODUCT_URL)],
+      contents: [storeButton(alertLinkFor(transitions[0]?.stock.model))],
     },
   };
 };
@@ -219,7 +254,7 @@ export const buildAltText = (transitions: readonly StockTransition[]): string =>
   if (transitions.length === 1) {
     return `🍎 ${first.stock.model} ${first.stock.colorTh} ${first.stock.storage} พร้อมจำหน่ายที่ ${first.stock.storeName}`;
   }
-  return `🍎 ${first.stock.model} พร้อมจำหน่าย ${transitions.length} รายการ`;
+  return `🍎 ${modelsOf(transitions)} พร้อมจำหน่าย ${transitions.length} รายการ`;
 };
 
 /**
@@ -255,28 +290,28 @@ export const buildStockAlertMessage = (transitions: readonly StockTransition[]):
 
 /// Plain-text fallback, also used by LINE_DRY_RUN logging.
 export const buildPlainText = (transitions: readonly StockTransition[]): string => {
-  const head = `🍎 ${transitions[0]?.stock.model ?? env.APPLE_MODEL_FILTER} STOCK ALERT`;
+  const head = ['🚨 ของเข้าแล้ว!', `📱 ${modelsOf(transitions)}`];
+  const multi = new Set(transitions.map((t) => t.stock.model)).size > 1;
 
   if (transitions.length === 1) {
     const { stock } = transitions[0] as StockTransition;
     return [
-      head,
+      ...head,
       '',
-      `🎨 สี: ${stock.colorTh}`,
-      `💾 ความจุ: ${stock.storage}`,
-      `📍 สาขา: ${stock.storeName}`,
-      `🟢 สถานะ: พร้อมจำหน่าย`,
-      `⏰ ตรวจพบ: ${formatThaiDateTime(stock.checkedAt)}`,
+      `🟢 ${mdLink(`${stock.colorTh} ${stock.storage}`, stock.partNumber)}`,
+      `📍 ${stock.storeName}`,
+      `⏰ เจอเมื่อ ${formatThaiDateTime(stock.checkedAt)}`,
+      '',
+      TAP_HINT,
     ].join('\n');
   }
 
-  // Apple has several physical stores, so - unlike True's single online
-  // channel - the branch is not redundant and stays on every row.
+  // Apple has several physical stores, so the branch stays on every row.
   const items = transitions
-    .map((t, i) => `${i + 1}. ${t.stock.colorTh} ${t.stock.storage} — ${t.stock.storeName}`)
+    .map((t) => `🟢 ${multi ? `${t.stock.model} · ` : ''}${mdLink(`${t.stock.colorTh} ${t.stock.storage}`, t.stock.partNumber)}\n   📍 ${t.stock.storeName}`)
     .join('\n');
 
-  return [head, '', `🟢 พบสินค้า ${transitions.length} รายการ`, '', items].join('\n');
+  return [...head, `🔔 เพิ่งเข้า ${transitions.length} รายการ`, '', items, '', TAP_HINT].join('\n');
 };
 
 /// Plain-text twin of `buildSystemMessage`, for Telegram / Discord.

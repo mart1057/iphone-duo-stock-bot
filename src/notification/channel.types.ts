@@ -1,3 +1,4 @@
+import type { Mutes } from './alert.filter.js';
 import type { FlexMessage } from './line.flex.js';
 
 /**
@@ -10,7 +11,8 @@ import type { FlexMessage } from './line.flex.js';
 export interface OutboundMessage {
   /// Automatic system notices are excluded from LINE and Telegram.
   kind?: 'stock' | 'system';
-  /// Intentional second stock copy for every channel.
+  /// Intentional second stock copy. LINE skips it; Telegram sends it to admins only;
+  /// members get each stock alert once.
   stockReminder?: boolean;
   /// Channels to skip for this message (e.g. ['line'] for test sends, to save quota).
   excludeChannels?: readonly string[];
@@ -18,6 +20,10 @@ export interface OutboundMessage {
   flex: FlexMessage;
   /// Plain-text rendering, used by Telegram / Discord and by logs.
   text: string;
+  /// Stock alerts only: re-renders `text` for a Telegram chat that muted some
+  /// models / colors / storages. Returns null when everything in the alert is
+  /// muted for that chat, which then gets nothing.
+  renderFiltered?: (mutes: Mutes) => string | null;
   /// When true, Discord gets a second reminder a few seconds after the first
   /// - the other channels still send exactly once.
   repeatDiscord?: boolean;

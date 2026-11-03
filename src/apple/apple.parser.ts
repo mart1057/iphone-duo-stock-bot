@@ -109,6 +109,8 @@ export const parseVariantName = (
   const name = normaliseSpaces(entry.name);
   const model = normaliseSpaces(modelFilter);
   if (!name.toLowerCase().startsWith(model.toLowerCase())) return null;
+  // Exact model only: "iPhone 18 Pro" must not swallow "iPhone 18 Pro Max ...".
+  if (!/^\s+\d+(?:GB|TB)\b/i.test(name.slice(model.length))) return null;
 
   const storageMatch = STORAGE_RE.exec(name);
   if (!storageMatch?.[1]) return null;

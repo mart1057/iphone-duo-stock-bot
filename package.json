@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "admin": "tsx src/admin/main.ts",
+    "admin:start": "node dist/admin/main.js",
     "notify:test": "tsx src/scripts/test-notification.ts",
     "notify:samples": "tsx src/scripts/test-notification.ts --samples",
     "notify:status": "tsx src/scripts/test-notification.ts --status",

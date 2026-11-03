@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import type { ProductStock } from '../stock/stock.types.js';
+import { modelPauseStore } from '../stock/model.pause.js';
 import { chunk, mapWithLimit } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 import { appleCatalog, type AppleCatalog } from './apple.catalog.js';
@@ -32,11 +33,18 @@ export class AppleAvailabilityCollector {
   constructor(
     private readonly client: AppleClient = appleClient,
     private readonly catalog: AppleCatalog = appleCatalog,
+    /// Models an admin paused from Telegram - not requested at all.
+    private readonly pausedModels: () => Promise<ReadonlySet<string>> = () => modelPauseStore.pausedModels(),
   ) {}
 
   async collect(): Promise<AvailabilitySnapshot> {
     const checkedAt = new Date();
-    const variants = await this.catalog.getVariants();
+    const paused = await this.pausedModels();
+    const variants = (await this.catalog.getVariants()).filter((variant) => !paused.has(variant.model));
+    if (variants.length === 0) {
+      logger.info('Every monitored model is paused - no Apple request this cycle');
+      return { checkedAt, stocks: [], stores: [], variants: [], errors: [], rateLimited: false };
+    }
     const variantMap = new Map(variants.map((variant) => [variant.partNumber, variant]));
 
     const partChunks = chunk(

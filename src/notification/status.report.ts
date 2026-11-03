@@ -1,5 +1,6 @@
-import { env } from '../config/env.js';
+import { monitoredModelsLabel } from '../config/env.js';
 import { prisma } from '../database/prisma.js';
+import { modelPauseStore } from '../stock/model.pause.js';
 import { formatThaiDateTime } from '../utils/datetime.js';
 import type { OutboundMessage } from './channel.types.js';
 import { buildSystemMessage } from './line.flex.js';
@@ -11,7 +12,9 @@ export interface StatusSnapshot {
   unavailable: number;
   unknown: number;
   lastCheckedAt: Date | null;
-  inStock: Array<{ colorTh: string; storage: string; storeName: string }>;
+  inStock: Array<{ colorTh: string; storage: string; storeName: string; model?: string; color?: string; partNumber?: string }>;
+  /// In-stock rows left out by a chat's alert filter.
+  hidden?: number;
 }
 
 /**
@@ -21,9 +24,12 @@ export interface StatusSnapshot {
  * This is the on-demand counterpart: "what does it look like right now?".
  */
 export const readStatus = async (): Promise<StatusSnapshot> => {
-  const stocks = await prisma.stock.findMany({
-    include: { variant: true, store: true },
-  });
+  // A paused model's rows are its last answer before the pause - stale, and
+  // members must not see the model at all - so they are left out entirely.
+  const paused = await modelPauseStore.pausedModels();
+  const stocks = (await prisma.stock.findMany({
+    include: { variant: { include: { product: true } }, store: true },
+  })).filter((stock) => !paused.has(stock.variant.product.model));
 
   const inStock = stocks
     .filter((stock) => stock.available)
@@ -31,6 +37,9 @@ export const readStatus = async (): Promise<StatusSnapshot> => {
       colorTh: stock.variant.colorTh ?? stock.variant.color,
       storage: stock.variant.storage,
       storeName: stock.store.name,
+      model: stock.variant.product.model,
+      color: stock.variant.color,
+      partNumber: stock.variant.partNumber,
     }))
     .sort(
       (a, b) =>
@@ -55,14 +64,14 @@ export const readStatus = async (): Promise<StatusSnapshot> => {
 };
 
 export const buildStatusMessage = (snapshot: StatusSnapshot): OutboundMessage => {
-  const title = '📊 สถานะสต็อกตอนนี้';
+  const title = '📊 สถานะบอท';
   const headline =
     snapshot.available > 0
-      ? `พบสินค้าพร้อมจำหน่าย ${snapshot.available} รายการ`
-      : 'ยังไม่มีสินค้าพร้อมจำหน่าย';
+      ? `🟢 มีของ ${snapshot.available} รายการ`
+      : '😢 ยังไม่มีของ';
 
   const rows: Array<[string, string]> = [
-    ['รุ่น', env.APPLE_MODEL_FILTER],
+    ['รุ่น', monitoredModelsLabel()],
     ['มีของ', `${snapshot.available} / ${snapshot.total}`],
     ['ไม่มีของ', `${snapshot.unavailable}`],
   ];

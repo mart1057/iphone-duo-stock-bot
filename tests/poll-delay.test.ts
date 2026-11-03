@@ -3,13 +3,30 @@ import { nextPollDelay } from '../src/scheduler/poll-delay.js';
 import { AppleClient } from '../src/apple/apple.client.js';
 import { RateLimitGuard } from '../src/scheduler/rate-limit.guard.js';
 
-describe('random polling', () => {
-  it('samples every delay from 25 through 45 seconds', () => {
+describe('scheduled polling', () => {
+  it.each([
+    ['2026-10-30T05:30:00+07:00', 30],
+    ['2026-10-30T07:59:59.999+07:00', 30],
+    ['2026-10-30T08:00:00+07:00', 10],
+    ['2026-10-30T08:59:59.999+07:00', 10],
+    ['2026-10-30T09:00:00+07:00', 30],
+    ['2026-10-30T21:59:59+07:00', 30],
+    ['2026-10-31T08:00:00+07:00', 10],
+  ])('uses Bangkok schedule at %s', (timestamp, expected) => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    try {
+      expect(nextPollDelay(Date.parse(timestamp))).toBe(expected);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('samples all delays from 10 through 15 during the morning hour', () => {
     const random = vi.spyOn(Math, 'random');
     try {
-      for (let offset = 0; offset <= 20; offset++) {
-        random.mockReturnValue((offset + 0.5) / 21);
-        expect(nextPollDelay()).toBe(25 + offset);
+      for (let offset = 0; offset <= 5; offset++) {
+        random.mockReturnValue((offset + 0.5) / 6);
+        expect(nextPollDelay(Date.parse('2026-10-30T08:30:00+07:00'))).toBe(10 + offset);
       }
     } finally {
       random.mockRestore();

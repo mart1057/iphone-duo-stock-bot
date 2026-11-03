@@ -7,17 +7,14 @@
  * wiring without waiting for stock to actually appear.
  */
 import { channelDispatcher } from '../notification/channels.js';
-import {
-  buildPlainText,
-  buildStockAlertMessage,
-  buildSystemMessage,
-  buildSystemPlainText,
-} from '../notification/line.flex.js';
+import { buildSystemMessage, buildSystemPlainText } from '../notification/line.flex.js';
+import { telegramNotificationService } from '../notification/telegram.service.js';
+import { env, isTelegramConfigured } from '../config/env.js';
+import { buildAlertSamples, type PartNumberLookup } from './alert-samples.js';
+import { restockHistoryRepository } from '../stock/restock.history.js';
 import { buildStatusMessage, readStatus } from '../notification/status.report.js';
 import { disconnectPrisma } from '../database/prisma.js';
-import type { StockTransition } from '../stock/stock.types.js';
 import { logger } from '../utils/logger.js';
-import { SEED_VARIANTS } from '../apple/apple.seed.js';
 
 /// Test sends never go to LINE - its monthly quota is reserved for real alerts.
 const NO_LINE = ['line'] as const;
@@ -25,99 +22,49 @@ const NO_LINE = ['line'] as const;
 /// Appended to every sample so a test can never be mistaken for real stock.
 const SAMPLE_FOOTER = '\n\n— ตัวอย่างสำหรับทดสอบ ไม่ใช่การแจ้งเตือนจริง —';
 
-/// Real iPhone Duo variants (colour, part number, price) for realistic samples.
-const duoVariant = (color: string, storage: string) => {
-  const variant = (SEED_VARIANTS['iphone duo'] ?? []).find(
-    (entry) => entry.color === color && entry.storage === storage,
-  );
-  if (!variant) throw new Error(`No iPhone Duo variant ${storage} ${color}`);
-  return variant;
-};
-
-const sampleTransition = (
-  color: string,
-  storage: string,
-  storeName: string,
-): StockTransition => {
-  const variant = duoVariant(color, storage);
-  return {
-  stockId: `sample-${color}-${storage}`,
-  previousStatus: 'UNAVAILABLE',
-  currentStatus: 'AVAILABLE',
-  stock: {
-    model: variant.model,
-    color: variant.color,
-    colorTh: variant.colorTh,
-    storage,
-    partNumber: variant.partNumber,
-    basePart: variant.basePart,
-    priceTHB: variant.priceTHB,
-    storeName,
-    storeCode: 'R733',
-    status: 'AVAILABLE',
-    available: true,
-    quote: 'พร้อมจำหน่าย วันนี้',
-    checkedAt: new Date(),
-  },
-  };
-};
-
 /**
- * Sends one of each alert the bot can produce, so the formatting can be
- * reviewed without waiting for Apple to actually restock or block us.
+ * Sends every restock scenario (1 item ... many, one model ... both models at
+ * once) exactly as the bot would render it, so the layout can be reviewed.
+ * Telegram: owner chats (TELEGRAM_CHAT_ID) only - invited members never get
+ * test messages. Discord: the webhook. LINE: never (its quota is for real alerts).
  */
 const sendSamples = async (): Promise<boolean> => {
-  const single = [sampleTransition('Night Sky', '256GB', 'Apple Central World')];
-  const multi = [
-    ...single,
-    sampleTransition('Star White', '512GB', 'Apple Iconsiam'),
-    sampleTransition('Night Sky', '2TB', 'Apple Central World'),
-  ];
-
-  const until = new Date(Date.now() + 30 * 60_000);
-  const rateLimitRows: Array<[string, string]> = [
-    ['พักนาน', '30 นาที'],
-    ['กลับมาตรวจ', until.toTimeString().slice(0, 5)],
-    ['ล้มเหลวติดกัน', '4 ครั้ง'],
-    ['หมายเหตุ', 'ระหว่างนี้ยังไม่ทราบสถานะสต็อก ไม่ใช่ว่าไม่มีของ'],
-  ];
-
-  const samples = [
-    {
-      label: 'มีของ 1 รายการ',
-      flex: buildStockAlertMessage(single),
-      text: buildPlainText(single) + SAMPLE_FOOTER,
-    },
-    {
-      label: 'มีของ 3 รายการ',
-      flex: buildStockAlertMessage(multi),
-      text: buildPlainText(multi) + SAMPLE_FOOTER,
-    },
-    {
-      label: 'Apple บล็อก (541)',
-      flex: buildSystemMessage('⚠️ ระบบหยุดตรวจชั่วคราว', 'Apple ปฏิเสธคำขอ (rate limit) - พักการตรวจอัตโนมัติ', rateLimitRows, 'warn'),
-      text:
-        buildSystemPlainText(
-          '⚠️ ระบบหยุดตรวจชั่วคราว',
-          'Apple ปฏิเสธคำขอ (rate limit) - พักการตรวจอัตโนมัติ',
-          rateLimitRows,
-        ) + SAMPLE_FOOTER,
-    },
-  ];
-
+  // Real part numbers from the database, so every sample link opens the right SKU.
+  let lookup: PartNumberLookup | undefined;
+  try {
+    const skus = await restockHistoryRepository.listSkus();
+    lookup = (model, color, storage) =>
+      skus.find((sku) => sku.model === model && sku.color === color && sku.storage === storage)?.partNumber;
+  } catch {
+    logger.warn('Could not read part numbers - sample links use the built-in iPhone Duo list only');
+  }
+  const samples = await buildAlertSamples(lookup);
   let allOk = true;
   logger.raw('Samples:');
 
   for (const sample of samples) {
-    const result = await channelDispatcher.push({ flex: sample.flex, text: sample.text, excludeChannels: NO_LINE });
-    const discord = result.results.find((entry) => entry.channel === 'discord');
-    const status = discord?.success
-      ? `✅ sent (id=${discord.messageId})`
-      : `❌ ${discord?.error ?? 'discord not configured'}`;
-    logger.raw(`  ${sample.label.padEnd(22)} ${status}`);
-    if (!discord?.success) allOk = false;
-    // Stay well clear of Discord's per-webhook rate limit.
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    for (const [index, body] of sample.texts.entries()) {
+      const part = sample.texts.length > 1 ? ` (ข้อความ ${index + 1}/${sample.texts.length})` : '';
+      const text = `🧪 ตัวอย่าง ${sample.label}${part}\n\n${body}${SAMPLE_FOOTER}`;
+
+      const telegram = await Promise.all(
+        env.telegramChatIds.map((chatId) => telegramNotificationService.sendUnchecked(chatId, text)),
+      );
+      const discord = (await channelDispatcher.push({
+        flex: buildSystemMessage('🧪', 'sample', [], 'ok'),
+        text,
+        excludeChannels: ['line', 'telegram'],
+      })).results.find((entry) => entry.channel === 'discord');
+
+      const status = [
+        isTelegramConfigured() ? `telegram ${telegram.every(Boolean) ? '✅' : '❌'}` : 'telegram -',
+        discord ? `discord ${discord.success ? '✅' : '❌'}` : 'discord -',
+      ].join('  ');
+      logger.raw(`  ${(sample.label.slice(0, 2) + part).padEnd(18)} ${status}`);
+      if (telegram.some((ok) => !ok) || (discord && !discord.success)) allOk = false;
+      // Stay well clear of Telegram / Discord per-chat rate limits.
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
   }
 
   logger.raw('');
@@ -164,7 +111,7 @@ const main = async (): Promise<void> => {
   const headline = 'ถ้าเห็นข้อความนี้ แปลว่าช่องทางนี้พร้อมใช้งานแล้ว';
   const rows: Array<[string, string]> = [
     ['สถานะ', 'ทดสอบระบบ ไม่ใช่การแจ้งเตือนสต็อกจริง'],
-    ['รอบตรวจ', `สุ่มพัก 25–45 วินาที`],
+    ['รอบตรวจ', `08:00–09:00 น. สุ่ม 10–15 วินาที ช่วงอื่น 30 วินาที (เวลาไทย)`],
   ];
 
   const result = await channelDispatcher.push({

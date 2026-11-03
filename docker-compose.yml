@@ -31,6 +31,11 @@ services:
       # Override the host-facing URL from .env with the compose network one.
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/iphone_duo_stock_bot?schema=public
       TZ: Asia/Bangkok
+      # Admin UI must listen on all interfaces inside the container;
+      # set ADMIN_PASSWORD in .env. Published on the host's loopback only.
+      ADMIN_HOST: 0.0.0.0
+    ports:
+      - '127.0.0.1:3008:3008'
     # Apply migrations before the bot starts, every time.
     command: sh -c "npx prisma migrate deploy && node dist/index.js"
 

@@ -29,6 +29,7 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY --from=build /app/dist ./dist
+COPY assets ./assets
 
 # prisma migrate deploy needs write access to nothing but the DB; run unprivileged.
 USER node

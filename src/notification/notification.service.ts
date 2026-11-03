@@ -10,7 +10,8 @@ import {
   buildSystemMessage,
   buildSystemPlainText,
 } from './line.flex.js';
-import { buildStockAlertText } from './stock.text.js';
+import { isMuted, type Mutes } from './alert.filter.js';
+import { buildStockAlertText, filterSnapshot, snapshotForModel } from './stock.text.js';
 import { readStatus, type StatusSnapshot } from './status.report.js';
 
 export class NotificationService {
@@ -28,8 +29,8 @@ export class NotificationService {
   ) {}
 
   /**
-   * Sends restock alerts twice to every channel, three
-   * seconds apart. Each copy contains
+   * Dispatches two stock copies, three seconds apart. LINE receives only
+   * the first; Telegram members also receive only the first. Each copy contains
    * every new-in-stock item and gets its own delivery log and retry key.
    */
   async notify(result: StockCheckResult): Promise<void> {
@@ -46,33 +47,56 @@ export class NotificationService {
 
     // Reading the snapshot is a nicety, not a requirement: if it fails, still
     // send the alert with the short form rather than dropping it.
-    let text: string;
+    let snapshot: StatusSnapshot | null = null;
     try {
-      text = buildStockAlertText(transitions, await this.snapshot());
+      snapshot = await this.snapshot();
     } catch (error) {
       logger.warn('Could not read stock snapshot - falling back to short alert', error);
-      text = buildPlainText(transitions);
     }
-    logger.debug('Alert text', `\n${text}`);
 
-    const message = { flex: buildStockAlertMessage(transitions), text };
+    // One message per model, so "Duo is back" and "Pro Max is back" never
+    // blur into one wall of text. Each carries only its own model's stock.
+    const byModel = new Map<string, StockTransition[]>();
+    for (const transition of transitions) {
+      const group = byModel.get(transition.stock.model);
+      if (group) group.push(transition);
+      else byModel.set(transition.stock.model, [transition]);
+    }
+    const messages = [...byModel].map(([model, group]) => {
+      const modelSnapshot = snapshot ? snapshotForModel(snapshot, model) : null;
+      const text = modelSnapshot ? buildStockAlertText(group, modelSnapshot) : buildPlainText(group);
+      logger.debug(`Alert text (${model})`, `\n${text}`);
+      // Telegram chats can mute models / colors / storages from the /alerts menu.
+      const renderFiltered = (mutes: Mutes): string | null => {
+        const kept = group.filter((transition) => !isMuted(mutes, transition.stock));
+        if (kept.length === 0) return null;
+        return modelSnapshot
+          ? buildStockAlertText(kept, filterSnapshot(modelSnapshot, mutes))
+          : buildPlainText(kept);
+      };
+      return { group, message: { flex: buildStockAlertMessage(group), text, renderFiltered } };
+    });
+
     for (let copy = 1; copy <= 2; copy += 1) {
       if (copy === 2) await this.pause(3000);
-      logger.info(`Sending stock alert copy ${copy}/2`);
-      // Transport retries reuse the key for each intentional copy.
-      try {
-        const pushResult = await this.channels.push(
-          copy === 2 ? { ...message, stockReminder: true } : message,
-          crypto.randomUUID(),
-        );
-        if (!pushResult.success) {
-          logger.error('Stock alert delivered to no channel', pushResult.error);
+      for (const { group, message } of messages) {
+        const model = group[0]?.stock.model ?? '';
+        logger.info(`Sending stock alert copy ${copy}/2 - ${model}`);
+        // Transport retries reuse the key for each intentional copy.
+        try {
+          const pushResult = await this.channels.push(
+            copy === 2 ? { ...message, stockReminder: true } : message,
+            crypto.randomUUID(),
+          );
+          if (!pushResult.success) {
+            logger.error(`Stock alert delivered to no channel - ${model}`, pushResult.error);
+          }
+          await this.logAll(group, pushResult.messageId, pushResult.success, pushResult.error);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          logger.error(`Stock alert copy ${copy}/2 failed - ${model}`, detail);
+          await this.logAll(group, null, false, detail);
         }
-        await this.logAll(transitions, pushResult.messageId, pushResult.success, pushResult.error);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        logger.error(`Stock alert copy ${copy}/2 failed`, detail);
-        await this.logAll(transitions, null, false, detail);
       }
     }
   }

@@ -107,19 +107,18 @@ describe('flex message', () => {
 
   it('renders the plain-text fallback in the requested layout', () => {
     const text = buildPlainText([one]);
-    expect(text).toContain('🍎 iPhone 18 Pro Max STOCK ALERT');
-    expect(text).toContain('🎨 สี: เบอร์กันดี');
-    expect(text).toContain('💾 ความจุ: 256GB');
-    expect(text).toContain('📍 สาขา: Apple Central World');
-    expect(text).toContain('🟢 สถานะ: พร้อมจำหน่าย');
-    expect(text).toContain('⏰ ตรวจพบ: 17/09/2026 23:30:15');
+    expect(text).toContain('🚨 ของเข้าแล้ว!\n📱 iPhone 18 Pro Max');
+    expect(text).toMatch(/🟢 \[เบอร์กันดี 256GB\]\(https:\/\/www\.apple\.com\/th\/xc\/product\/[^)]+\)/);
+    expect(text).toContain('📍 Apple Central World');
+    expect(text).toContain('⏰ เจอเมื่อ 17/09/2026 23:30:15');
+    expect(text).toContain('👉 แตะชื่อรุ่นเพื่อเปิดหน้าจอง');
   });
 
-  it('numbers items in the multi-item text fallback', () => {
+  it('lists every item with its branch in the multi-item text fallback', () => {
     const text = buildPlainText(three);
-    expect(text).toContain('🟢 พบสินค้า 3 รายการ');
-    expect(text).toContain('1. เบอร์กันดี 256GB — Apple Central World');
-    expect(text).toContain('2. ธารน้ำแข็ง 512GB — Apple Iconsiam');
+    expect(text).toContain('🔔 เพิ่งเข้า 3 รายการ');
+    expect(text).toMatch(/🟢 \[เบอร์กันดี 256GB\]\([^)]+\)\n   📍 Apple Central World/);
+    expect(text).toMatch(/🟢 \[ธารน้ำแข็ง 512GB\]\([^)]+\)\n   📍 Apple Iconsiam/);
   });
 
   it('refuses to build an empty alert', () => {

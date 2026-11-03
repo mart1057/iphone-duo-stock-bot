@@ -89,6 +89,8 @@ export class DiscordNotificationService implements NotificationChannel {
               content: text.slice(0, MAX_CONTENT_LENGTH),
               // Never let a product name turn into an @everyone ping.
               allowed_mentions: { parse: [] },
+              // SUPPRESS_EMBEDS: product links stay one tidy line, no preview cards.
+              flags: 4,
             }),
           });
 

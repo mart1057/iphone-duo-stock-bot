@@ -1,4 +1,4 @@
-import { env } from '../config/env.js';
+import { env, type AppleProductTarget } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { appleClient, type AppleClient } from './apple.client.js';
 import { parseCatalog, storageRank } from './apple.parser.js';
@@ -7,16 +7,23 @@ import { isRateLimitError, type AppleVariant } from './apple.types.js';
 
 /**
  * Discovers the tracked variants (part numbers) from Apple's own buy-flow page
- * instead of hard-coding them, so a lineup change is picked up automatically.
- * Cached for APPLE_CATALOG_TTL_MINUTES - part numbers change far less often
- * than availability does.
+ * of every monitored model instead of hard-coding them, so a lineup change is
+ * picked up automatically. Cached for APPLE_CATALOG_TTL_MINUTES - part numbers
+ * change far less often than availability does.
+ *
+ * Each model is independent: if one buy page fails to parse, that model keeps
+ * its previous catalogue (or seed) and the others carry on.
  */
 export class AppleCatalog {
   private variants: AppleVariant[] = [];
+  private readonly byModel = new Map<string, AppleVariant[]>();
   private loadedAt: number | null = null;
   private inflight: Promise<AppleVariant[]> | null = null;
 
-  constructor(private readonly client: AppleClient = appleClient) {}
+  constructor(
+    private readonly client: AppleClient = appleClient,
+    private readonly products: () => readonly AppleProductTarget[] = () => env.appleProducts,
+  ) {}
 
   private isStale(): boolean {
     if (this.loadedAt === null) return true;
@@ -37,47 +44,69 @@ export class AppleCatalog {
     return new Map(variants.map((variant) => [variant.partNumber, variant]));
   }
 
-  private async refresh(): Promise<AppleVariant[]> {
+  /// Loads one model. Returns false when it had to fall back (old / seed / none).
+  private async refreshProduct(product: AppleProductTarget): Promise<boolean> {
     let variants: AppleVariant[] = [];
     try {
-      const html = await this.client.getProductPageHtml();
-      variants = parseCatalog(html, env.APPLE_MODEL_FILTER);
+      const html = await this.client.getProductPageHtml(product.url);
+      variants = parseCatalog(html, product.model);
     } catch (error) {
       // Apple pushing back must still reach the rate-limit guard.
       if (isRateLimitError(error)) throw error;
-      logger.warn('Apple buy page fetch failed', error instanceof Error ? error.message : String(error));
+      logger.warn('Apple buy page fetch failed', `${product.model}: ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    if (variants.length > 0) {
+      this.byModel.set(product.model, variants);
+      logger.info(
+        `Catalogue loaded: ${product.model} ${variants.length} variants`,
+        `colors=${[...new Set(variants.map((v) => v.color))].join('/')} storage=${[...new Set(variants.map((v) => v.storage))].join('/')}`,
+      );
+      return true;
+    }
+
+    // Keep the previous catalogue rather than blanking the monitor.
+    logger.error(
+      'Apple catalogue parse returned 0 variants - keeping previous catalogue',
+      `model="${product.model}" url=${product.url}`,
+    );
+    if (!this.byModel.has(product.model)) {
+      const seed = seedVariantsFor(product.model);
+      if (seed.length > 0) {
+        logger.warn(`Using ${seed.length} seeded part numbers for "${product.model}"`);
+        this.byModel.set(product.model, seed);
+      }
+    }
+    return false;
+  }
+
+  private async refresh(): Promise<AppleVariant[]> {
+    const products = this.products();
+    let allFresh = true;
+    for (const product of products) {
+      if (!(await this.refreshProduct(product))) allFresh = false;
+    }
+
+    const variants = products
+      .flatMap((product) => this.byModel.get(product.model) ?? [])
+      .sort(
+        (a, b) =>
+          products.findIndex((p) => p.model === a.model) - products.findIndex((p) => p.model === b.model) ||
+          storageRank(a.storage) - storageRank(b.storage) ||
+          a.color.localeCompare(b.color),
+      );
 
     if (variants.length === 0) {
-      // Keep the previous catalogue rather than blanking the monitor.
-      logger.error(
-        'Apple catalogue parse returned 0 variants - keeping previous catalogue',
-        `model="${env.APPLE_MODEL_FILTER}" url=${env.APPLE_PRODUCT_URL}`,
-      );
-      if (this.variants.length > 0) return this.variants;
-      const seed = seedVariantsFor(env.APPLE_MODEL_FILTER);
-      if (seed.length > 0) {
-        logger.warn(`Using ${seed.length} seeded part numbers for "${env.APPLE_MODEL_FILTER}"`);
-        // Short TTL on purpose: retry the live page soon instead of in 24h.
-        this.variants = seed;
-        this.loadedAt = Date.now() - env.APPLE_CATALOG_TTL_MINUTES * 60_000 + 5 * 60_000;
-        return this.variants;
-      }
       throw new Error(
-        `No variants found for "${env.APPLE_MODEL_FILTER}" on ${env.APPLE_PRODUCT_URL}`,
+        `No variants found for ${products.map((p) => `"${p.model}" on ${p.url}`).join(', ')}`,
       );
     }
 
-    this.variants = variants.sort(
-      (a, b) => storageRank(a.storage) - storageRank(b.storage) || a.color.localeCompare(b.color),
-    );
-    this.loadedAt = Date.now();
-
-    logger.info(
-      `Catalogue loaded: ${variants.length} variants`,
-      `colors=${[...new Set(variants.map((v) => v.color))].join('/')} storage=${[...new Set(variants.map((v) => v.storage))].join('/')}`,
-    );
-
+    this.variants = variants;
+    // Short TTL when anything fell back: retry the live page soon, not in 24h.
+    this.loadedAt = allFresh
+      ? Date.now()
+      : Date.now() - env.APPLE_CATALOG_TTL_MINUTES * 60_000 + 5 * 60_000;
     return this.variants;
   }
 }

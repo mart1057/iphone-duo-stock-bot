@@ -49,15 +49,15 @@ export class StockScheduler {
 
   getStatusText(): string {
     const cooldown = this.rateLimit.snapshot();
-    if (this.stopped) return '⏹ หยุดการตรวจแล้ว';
-    if (!checkWindow().open) return '🌙 พักนอกเวลาตรวจ เริ่มอีกครั้ง 05:30 น. (เวลาไทย)';
-    if (this.isRunning) return '🔎 กำลังตรวจสต็อก';
+    if (this.stopped) return '⏸️ หยุดเช็คของอยู่';
+    if (!checkWindow().open) return '🌙 พักนอกเวลา จะเริ่มเช็คอีกครั้ง 05:30 น.';
+    if (this.isRunning) return '🔎 กำลังเช็คของ';
     if (cooldown.until && cooldown.until.getTime() > Date.now()) {
-      return `⏳ พักการตรวจจาก rate limit อีก ${Math.ceil((cooldown.until.getTime() - Date.now()) / 1000)} วินาที`;
+      return `⏳ Apple ขอให้พักก่อน อีก ${Math.ceil((cooldown.until.getTime() - Date.now()) / 1000)} วินาที`;
     }
     return env.STOCK_CHECK_CRON
-      ? `🟢 รอตรวจตามกำหนด cron: ${env.STOCK_CHECK_CRON}`
-      : `🟢 รอตรวจรอบถัดไป (สุ่มพัก 25–45 วินาทีหลังจบรอบ)`;
+      ? `🟢 ทำงานปกติ (รอบเช็ค: ${env.STOCK_CHECK_CRON})`
+      : `🟢 ทำงานปกติ รอเช็ครอบถัดไป`;
   }
 
   async start(): Promise<void> {
@@ -75,7 +75,7 @@ export class StockScheduler {
         void this.tick();
       });
     } else {
-      logger.info(`Scheduler mode: random delay 25–45s`);
+      logger.info(`Scheduler mode: 08:00–09:00 Bangkok delay 10–15s; otherwise 30s`);
     }
 
     if (env.RUN_ON_STARTUP) {

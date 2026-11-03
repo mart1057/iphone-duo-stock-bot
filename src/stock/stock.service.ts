@@ -33,8 +33,17 @@ export class StockService {
 
     const snapshot = await this.collector.collect();
 
-    const productId = await this.repository.upsertProduct(env.APPLE_MODEL_FILTER);
-    const variantIds = await this.repository.upsertVariants(productId, snapshot.variants);
+    // One Product row per model; variants hang off their own model.
+    const variantIds = new Map<string, string>();
+    const models = [...new Set(snapshot.variants.map((variant) => variant.model))];
+    for (const model of models.length > 0 ? models : [env.APPLE_MODEL_FILTER]) {
+      const productId = await this.repository.upsertProduct(model);
+      const ids = await this.repository.upsertVariants(
+        productId,
+        snapshot.variants.filter((variant) => variant.model === model),
+      );
+      for (const [partNumber, id] of ids) variantIds.set(partNumber, id);
+    }
     const storeIds = await this.repository.upsertStores(snapshot.stores);
 
     const transitions: StockTransition[] = [];
@@ -101,7 +110,11 @@ export class StockService {
 
     // Anything Apple did not answer for this cycle is UNKNOWN, not UNAVAILABLE.
     if (snapshot.errors.length > 0) {
-      await this.markMissingAsUnknown(observedStockIds, snapshot.checkedAt);
+      await this.markMissingAsUnknown(
+        observedStockIds,
+        snapshot.checkedAt,
+        new Set(snapshot.variants.map((variant) => variant.partNumber)),
+      );
     }
 
     const finishedAt = new Date();
@@ -129,10 +142,17 @@ export class StockService {
     return result;
   }
 
-  private async markMissingAsUnknown(observed: ReadonlySet<string>, checkedAt: Date): Promise<void> {
+  /// Only for parts that were actually asked about this cycle - a paused
+  /// model was never requested, so its last known answer stays as it is.
+  private async markMissingAsUnknown(
+    observed: ReadonlySet<string>,
+    checkedAt: Date,
+    requestedParts: ReadonlySet<string>,
+  ): Promise<void> {
     const states = await this.repository.loadPreviousStates();
-    for (const row of states.values()) {
+    for (const [key, row] of states) {
       if (observed.has(row.id)) continue;
+      if (!requestedParts.has(key.split('::')[0] ?? '')) continue;
       await this.repository.persist({
         stockId: row.id,
         status: 'UNKNOWN',

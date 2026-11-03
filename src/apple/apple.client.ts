@@ -141,10 +141,10 @@ export class AppleClient {
   }
 
   /// Raw HTML of the buy-flow page, used to discover part numbers.
-  async getProductPageHtml(): Promise<string> {
+  async getProductPageHtml(url: string = env.APPLE_PRODUCT_URL): Promise<string> {
     return withRetry(
       async () => {
-        const response = await request(env.APPLE_PRODUCT_URL, 'text/html,*/*');
+        const response = await request(url, 'text/html,*/*');
         return response.text();
       },
       {

@@ -47,9 +47,8 @@ describe('buildAvailabilityBody', () => {
   it('lists each branch with its items', () => {
     const text = buildAvailabilityBody(snapshot(four));
 
-    expect(text).toContain('มีของ: 4 / 32');
-    expect(text).toContain('ไม่มีของ: 28');
-    expect(text).toContain('ตรวจล่าสุด: 20/09/2026 17:18:20');
+    expect(text).toContain('🛍️ ตอนนี้มีของที่');
+    expect(text).toContain('⏰ เช็คล่าสุด 20/09 17:18 น.');
     expect(text).toContain('📍 Apple Central World');
     expect(text).toContain('📍 Apple Iconsiam');
     expect(text).toContain('   • ดำ 2TB');
@@ -57,14 +56,14 @@ describe('buildAvailabilityBody', () => {
 
   it('says so plainly when nothing is in stock', () => {
     const text = buildAvailabilityBody(snapshot([]));
-    expect(text).toContain('🔴 ยังไม่มีสินค้าพร้อมจำหน่าย');
+    expect(text).toContain('😢 ตอนนี้ยังไม่มีของ');
     expect(text).not.toContain('📍');
   });
 
   /// "ไม่มีของ" and "could not reach Apple" must never look the same.
   it('surfaces unknown count only when it is not zero', () => {
-    expect(buildAvailabilityBody(snapshot(four))).not.toContain('ไม่ทราบสถานะ');
-    expect(buildAvailabilityBody(snapshot(four, { unknown: 5 }))).toContain('ไม่ทราบสถานะ: 5');
+    expect(buildAvailabilityBody(snapshot(four))).not.toContain('เช็คไม่ได้');
+    expect(buildAvailabilityBody(snapshot(four, { unknown: 5 }))).toContain('⚠️ บางรายการเช็คไม่ได้ชั่วคราว');
   });
 });
 
@@ -76,8 +75,8 @@ describe('buildStockAlertText', () => {
   it('leads with what just changed, then shows everything available', () => {
     const text = buildStockAlertText([transition('ดำ', '2TB', 'Apple Iconsiam')], snapshot(four));
 
-    expect(text).toContain('🍎 iPhone 18 Pro Max STOCK ALERT');
-    expect(text).toContain('🔔 เพิ่งมีของ 1 รายการ');
+    expect(text).toContain('🚨 ของเข้าแล้ว!\n📱 iPhone 18 Pro Max\n🔔 เพิ่งเข้า 1 รายการ');
+    expect(text).toContain('👉 แตะชื่อรุ่นเพื่อเปิดหน้าจอง');
     expect(text).toContain('📍 Apple Central World');
     expect(text).toContain('📍 Apple Iconsiam');
   });
@@ -100,7 +99,7 @@ describe('buildStockAlertText', () => {
     );
     const text = buildStockAlertText(transitions, snapshot(four));
 
-    expect(text).toContain('🔔 เพิ่งมีของ 4 รายการ');
+    expect(text).toContain('🔔 เพิ่งเข้า 4 รายการ');
     expect(text.match(/🆕/g)).toHaveLength(4);
   });
 });

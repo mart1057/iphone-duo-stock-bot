@@ -1,2 +1,5 @@
-/** Random delay in seconds after the previous check finishes (25–45 inclusive). */
-export const nextPollDelay = (): number => 25 + Math.floor(Math.random() * 21);
+/** Delay after each completed check, using Bangkok time independently of host TZ. */
+export const nextPollDelay = (now = Date.now()): number => {
+  const hour = new Date(now + 7 * 60 * 60_000).getUTCHours();
+  return hour === 8 ? 10 + Math.floor(Math.random() * 6) : 30;
+};

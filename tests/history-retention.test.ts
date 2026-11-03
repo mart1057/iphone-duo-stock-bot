@@ -5,11 +5,19 @@ import { HistoryScheduler } from '../src/scheduler/history.scheduler.js';
 afterEach(() => vi.useRealTimers());
 
 describe('history retention', () => {
-  it('deletes only older history, preserving the cutoff and stock baseline', async () => {
+  it('keeps restock edges for the restock window and UNKNOWN rows for 72 hours', async () => {
     const now = new Date('2026-09-20T03:00:00Z');
     const cutoff = new Date('2026-09-17T03:00:00Z');
+    const restockCutoff = new Date('2026-08-21T03:00:00Z'); // 30 days
+    const row = (checkedAt: Date, status: string) => ({ checkedAt, status });
+    let history = [
+      row(new Date(cutoff.getTime() - 1), 'UNKNOWN'),
+      row(new Date(cutoff.getTime() - 1), 'AVAILABLE'),
+      row(new Date(restockCutoff.getTime() - 1), 'UNAVAILABLE'),
+      row(cutoff, 'UNKNOWN'),
+      row(now, 'AVAILABLE'),
+    ];
     const dates = [new Date(cutoff.getTime() - 1), cutoff, now];
-    let history = [...dates];
     let notifications = [...dates];
     const stock = { deleteMany: vi.fn(), update: vi.fn() };
     const tx = {
@@ -17,7 +25,8 @@ describe('history retention', () => {
       stock,
       stockHistory: { deleteMany: vi.fn(async ({ where }) => {
         const before = history.length;
-        history = history.filter(date => !(date < where.checkedAt.lt));
+        history = history.filter(item =>
+          !(item.checkedAt < where.checkedAt.lt && (!where.status || item.status === where.status)));
         return { count: before - history.length };
       }) },
       notificationLog: { deleteMany: vi.fn(async ({ where }) => {
@@ -27,11 +36,23 @@ describe('history retention', () => {
       }) },
     };
     const db = { $transaction: vi.fn(async (run) => run(tx)) };
-    expect(await pruneHistory(now, db as never)).toEqual({ cutoff, history: 1, notifications: 1 });
-    expect(history).toEqual([cutoff, now]);
+    expect(await pruneHistory(now, db as never, 30)).toEqual({ cutoff, restockCutoff, history: 2, notifications: 1 });
+    expect(history.map(item => item.status)).toEqual(['AVAILABLE', 'UNKNOWN', 'AVAILABLE']);
     expect(notifications).toEqual([cutoff, now]);
     expect(stock.deleteMany).not.toHaveBeenCalled();
     expect(stock.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps restock history for 6 months by default', async () => {
+    const now = new Date('2026-10-26T00:00:00Z');
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      stockHistory: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      notificationLog: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    };
+    const db = { $transaction: vi.fn(async (run) => run(tx)) };
+    const result = await pruneHistory(now, db as never);
+    expect(result.restockCutoff).toEqual(new Date('2026-04-29T00:00:00Z')); // 180 days
   });
 
   it('continues its daily schedule after failure and stops cleanly', async () => {

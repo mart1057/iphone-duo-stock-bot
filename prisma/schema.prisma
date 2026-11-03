@@ -143,3 +143,66 @@ model JobLock {
 
   @@map("job_locks")
 }
+
+/// Per-Telegram-chat alert filter, managed from the bot's /alerts menu.
+/// A row means "do NOT alert this chat for this value". An item is skipped
+/// when ANY of its model / color / storage is muted. No rows = alert on all.
+model TelegramAlertMute {
+  id        String   @id @default(uuid())
+  chatId    String   @map("chat_id")
+  /// "model" | "color" | "storage"
+  kind      String
+  /// Canonical value: model name, English color ("Night Sky"), storage ("256GB")
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([chatId, kind, value])
+  @@index([chatId])
+  @@map("telegram_alert_mutes")
+}
+
+/// People who opened the Telegram invite link. Admin chats live in
+/// TELEGRAM_CHAT_ID instead and are never stored here.
+/// approved = false: waiting for an admin; gets nothing until approved.
+model TelegramSubscriber {
+  chatId     String    @id @map("chat_id")
+  name       String?
+  username   String?
+  joinedAt   DateTime  @default(now()) @map("joined_at")
+  approved   Boolean   @default(true)
+  approvedAt DateTime? @map("approved_at")
+  /// Last day of membership (Bangkok calendar date). On this day the member
+  /// is removed and admins get a report. Null = never expires.
+  expiresOn  DateTime? @map("expires_on") @db.Date
+
+  @@map("telegram_subscribers")
+}
+
+/// Models an admin paused from Telegram (/models). Their part numbers are
+/// left out of every availability request until resumed.
+model PausedModel {
+  model    String   @id
+  pausedAt DateTime @default(now()) @map("paused_at")
+
+  @@map("paused_models")
+}
+
+/// Bot-wide membership price, stored in satang to avoid floating point rounding.
+model MembershipSettings {
+  id         String   @id
+  priceSatang Int     @map("price_satang")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("membership_settings")
+}
+
+/// One renewal reminder for each member and expiry date, with a retryable delivery lease.
+model MembershipReminder {
+  chatId     String    @map("chat_id")
+  expiresOn  DateTime  @map("expires_on") @db.Date
+  leaseUntil DateTime  @map("lease_until")
+  sentAt     DateTime? @map("sent_at")
+
+  @@id([chatId, expiresOn])
+  @@map("membership_reminders")
+}

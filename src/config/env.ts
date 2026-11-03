@@ -25,6 +25,14 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   TELEGRAM_CHAT_ID: z.string().default(''),
   TELEGRAM_DRY_RUN: booleanish.default('false'),
+  TELEGRAM_PAYMENT_QR_PATH: z.string().default('assets/payment-qr.jpg'),
+  /// Secret in the invite link t.me/<bot>?start=<code>. Empty = invites off.
+  /// Change it to stop the old link working (people already in stay in).
+  TELEGRAM_INVITE_CODE: z
+    .string()
+    .default('')
+    .refine((value) => value === '' || /^[A-Za-z0-9_-]{8,64}$/.test(value),
+      'Use 8-64 characters: A-Z a-z 0-9 _ -'),
 
   /// Discord incoming webhook(s) - free, no bot registration needed.
   DISCORD_WEBHOOK_URL: z.string().default(''),
@@ -46,6 +54,9 @@ const schema = z.object({
     .url()
     .default('https://www.apple.com/th/shop/buy-iphone/iphone-duo'),
   APPLE_MODEL_FILTER: z.string().default('iPhone Duo'),
+  /// Several models: "Model|buy-page URL;Model|URL". Empty = the single
+  /// APPLE_MODEL_FILTER + APPLE_PRODUCT_URL pair above.
+  APPLE_PRODUCTS: z.string().default(''),
   APPLE_POSTAL_CODES: z.string().default('10330'),
   APPLE_MAX_PARTS_PER_REQUEST: z.coerce.number().int().min(1).max(50).default(16),
   APPLE_CATALOG_TTL_MINUTES: z.coerce.number().int().min(1).default(1440),
@@ -69,11 +80,53 @@ const schema = z.object({
   /// the message quota on status chatter instead of stock alerts.
   SYSTEM_ALERT_MIN_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(30),
 
+  /// How long restock / sold-out events are kept for the Telegram /history
+  /// menu. Other history (UNKNOWN rows, notification logs) is kept 72 hours.
+  RESTOCK_HISTORY_RETENTION_DAYS: z.coerce.number().int().min(3).max(730).default(180),
+
+  /// Hour of day (Bangkok, 0-23) from which members whose expiry date is
+  /// today are removed and admins get the report.
+  MEMBER_EXPIRY_CHECK_HOUR: z.coerce.number().int().min(0).max(23).default(9),
+
+  /// Web admin UI (member summary & management). 0 = off.
+  ADMIN_PORT: z.coerce.number().int().min(0).max(65535).default(3008),
+  ADMIN_HOST: z.string().default('127.0.0.1'),
+  /// HTTP Basic password for the admin UI (user: admin). Required when
+  /// ADMIN_HOST is not a loopback address.
+  ADMIN_PASSWORD: z.string().default(''),
+
   DISTRIBUTED_LOCK_ENABLED: booleanish.default('false'),
   LOCK_TTL_SECONDS: z.coerce.number().int().min(30).default(300),
 });
 
+export interface AppleProductTarget {
+  /// Name prefix exactly as Apple writes it, e.g. "iPhone 18 Pro Max".
+  model: string;
+  /// Buy page that lists this model's part numbers.
+  url: string;
+}
+
+const parseProducts = (value: string): AppleProductTarget[] =>
+  value
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const [model = '', url = ''] = entry.split('|').map((part) => part.trim());
+      return { model, url };
+    });
+
 const parsed = schema.superRefine((config, context) => {
+  for (const product of parseProducts(config.APPLE_PRODUCTS)) {
+    let validUrl = false;
+    try {
+      validUrl = new URL(product.url).protocol === 'https:';
+    } catch { /* reported below */ }
+    if (!product.model || !validUrl) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['APPLE_PRODUCTS'],
+        message: 'Use "Model|https://www.apple.com/th/shop/buy-iphone/..." entries separated by ";"' });
+    }
+  }
   if (config.APPLE_PROXY_URL && (!config.DATAIMPULSE_USERNAME || !config.DATAIMPULSE_PASSWORD)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['APPLE_PROXY_URL'],
       message: 'Proxy requires DATAIMPULSE_USERNAME and DATAIMPULSE_PASSWORD' });
@@ -91,11 +144,19 @@ const raw = parsed.data;
 
 export const env = {
   ...raw,
+  /// Every model being monitored, in display order.
+  appleProducts: (() => {
+    const list = parseProducts(raw.APPLE_PRODUCTS);
+    const products = list.length > 0 ? list : [{ model: raw.APPLE_MODEL_FILTER, url: raw.APPLE_PRODUCT_URL }];
+    // The same model twice would double every request and every alert.
+    return products.filter((p, i) => products.findIndex((q) => q.model.toLowerCase() === p.model.toLowerCase()) === i);
+  })() as readonly AppleProductTarget[],
   /// Seed postcodes used to discover Apple Stores.
   applePostalCodes: csv(raw.APPLE_POSTAL_CODES),
   /// LINE push targets (userId / groupId / roomId).
   lineRecipients: csv(raw.LINE_USER_ID),
-  /// Telegram chat targets.
+  /// Telegram ADMIN chats: always get alerts and may pause / resume checks
+  /// and manage subscribers. Invited people are stored in the database.
   telegramChatIds: csv(raw.TELEGRAM_CHAT_ID),
   /// Discord webhook endpoints.
   discordWebhookUrls: csv(raw.DISCORD_WEBHOOK_URL),
@@ -116,3 +177,12 @@ export const isDiscordConfigured = (): boolean => env.discordWebhookUrls.length 
 /// True when at least one channel can actually deliver an alert.
 export const isAnyChannelConfigured = (): boolean =>
   isLineConfigured() || isTelegramConfigured() || isDiscordConfigured();
+
+/// Buy page for a model - used for the "open Apple Store" buttons.
+export const productUrlFor = (model: string | undefined): string =>
+  env.appleProducts.find((product) => product.model === model)?.url ?? env.appleProducts[0]?.url ?? env.APPLE_PRODUCT_URL;
+
+/// "iPhone Duo, iPhone 18 Pro Max" - for headings and status lines.
+export const monitoredModelsLabel = (): string => env.appleProducts.map((product) => product.model).join(', ');
+
+export const isMultiModel = (): boolean => env.appleProducts.length > 1;
