@@ -195,3 +195,50 @@ describe('adaptive cooldown in the scheduler', () => {
     }
   });
 });
+
+
+describe('automatic restart after Apple 541', () => {
+  it.each(['result', 'throw'])('retries immediately for a 541 %s without cooldown', async (kind) => {
+    vi.useFakeTimers();
+    const stocks = { runCheck: vi.fn().mockResolvedValue(emptyResult()) };
+    if (kind === 'result') {
+      stocks.runCheck.mockResolvedValueOnce({ ...emptyResult(), rateLimited: true,
+        errors: ['10330: Apple request failed status=541 url=https://www.apple.com/'] });
+    } else {
+      stocks.runCheck.mockRejectedValueOnce(new AppleRequestError('rejected', 541));
+    }
+    const notifications = { notify: vi.fn().mockResolvedValue(undefined),
+      notifyRateLimited: vi.fn().mockResolvedValue(undefined) };
+    const repository = { releaseLock: vi.fn().mockResolvedValue(undefined),
+      acquireLock: vi.fn().mockResolvedValue(true) };
+    const scheduler = new StockScheduler(stocks as never, notifications as never, repository as never);
+    try {
+      await tickOf(scheduler)();
+      expect(stocks.runCheck).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyRateLimited).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stocks.runCheck).toHaveBeenCalledTimes(2);
+      await scheduler.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await scheduler.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pending restart when stopped', async () => {
+    vi.useFakeTimers();
+    const stocks = { runCheck: vi.fn().mockRejectedValue(new AppleRequestError('rejected', 541)) };
+    const scheduler = new StockScheduler(stocks as never, {} as never,
+      { releaseLock: vi.fn().mockResolvedValue(undefined) } as never);
+    try {
+      await tickOf(scheduler)();
+      await scheduler.stop();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(stocks.runCheck).toHaveBeenCalledTimes(1);
+    } finally {
+      await scheduler.stop();
+      vi.useRealTimers();
+    }
+  });
+});

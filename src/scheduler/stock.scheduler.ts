@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import cron, { type ScheduledTask } from 'node-cron';
-import { isRateLimitError } from '../apple/apple.types.js';
+import { AppleRequestError, isRateLimitError } from '../apple/apple.types.js';
 import { env } from '../config/env.js';
 import { notificationService, type NotificationService } from '../notification/notification.service.js';
 import { stockRepository, type StockRepository } from '../stock/stock.repository.js';
@@ -37,6 +37,7 @@ export class StockScheduler {
   private started = false;
   private generation = 0;
   private timer: NodeJS.Timeout | null = null;
+  private restartTimer: NodeJS.Timeout | null = null;
   private cronTask: ScheduledTask | null = null;
   private skippedTicks = 0;
 
@@ -91,6 +92,8 @@ export class StockScheduler {
     this.generation += 1;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    this.restartTimer = null;
     this.cronTask?.stop();
     this.cronTask = null;
     // An active check releases its own lock when it finishes.
@@ -98,7 +101,7 @@ export class StockScheduler {
   }
 
   private scheduleNext(generation: number): void {
-    if (this.stopped || generation !== this.generation) return;
+    if (this.stopped || generation !== this.generation || this.restartTimer) return;
     const pollDelay = nextPollDelay();
     const cooldown = this.rateLimit.check();
     const now = Date.now();
@@ -168,6 +171,8 @@ export class StockScheduler {
       return;
     }
 
+    let restartRequested = false;
+    const generation = this.generation;
     let lockHeld = false;
     this.isRunning = true;
 
@@ -181,7 +186,9 @@ export class StockScheduler {
       }
 
       const result = await this.stocks.runCheck();
-      if (result.rateLimited) {
+      if (result.rateLimited && result.errors.some((error) => /\bstatus=541\b/.test(error))) {
+        restartRequested = true;
+      } else if (result.rateLimited) {
         await this.enterCooldown(result.errors[0]);
       } else {
         await this.markHealthy();
@@ -190,7 +197,9 @@ export class StockScheduler {
     } catch (error) {
       // A failed cycle must never kill the scheduler.
       logger.error('Stock check cycle failed', error);
-      if (isRateLimitError(error)) {
+      if (error instanceof AppleRequestError && error.status === 541) {
+        restartRequested = true;
+      } else if (isRateLimitError(error)) {
         await this.enterCooldown(error instanceof Error ? error.message : undefined);
       } else {
         this.rateLimit.recordFailure();
@@ -198,6 +207,19 @@ export class StockScheduler {
     } finally {
       this.isRunning = false;
       if (lockHeld) await this.repository.releaseLock(LOCK_NAME, OWNER).catch(() => undefined);
+      if (restartRequested && !this.stopped && generation === this.generation) {
+        this.rateLimit.recordSuccess();
+        logger.warn('Apple rejected request status=541 - restarting stock check immediately');
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = null;
+          if (this.stopped || generation !== this.generation) return;
+          void this.tick().finally(() => {
+            if (!env.STOCK_CHECK_CRON) this.scheduleNext(generation);
+          });
+        }, 0);
+      }
     }
   }
 }
