@@ -253,6 +253,7 @@ export const mainMenu = (models: string, admin = false): Menu => ({
     [button('📈 ดูสถิติของเคยเข้า', 'h')],
     ...(admin
       ? [
+          [button('📊 สถิติเติมของตามวัน / เวลา', 'rs')],
           [button('⏯️ หยุด/เริ่มเช็คแต่ละรุ่น', 'mo')],
           [button('📊 สถานะบอท', 'st')],
           [button('🔗 ส่งคำเชิญ', 'inv'), button('👥 ดูสมาชิก', 'sl')],

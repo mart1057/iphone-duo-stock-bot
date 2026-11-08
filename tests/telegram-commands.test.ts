@@ -123,6 +123,7 @@ const fakes = (catalogue: SkuOption[] = skus) => {
     }),
   };
   const history = {
+    statistics: vi.fn(async () => [{ day: '2026-11-04', hour: 9, count: 3 }]),
     listSkus: vi.fn(async () => catalogue),
     restockCounts: vi.fn(async () => new Map([['v1', 4]])),
     restocks: vi.fn(async () => [
@@ -225,20 +226,20 @@ describe('Telegram menus', () => {
     const calls = vi.mocked(telegramNotificationService.setCommands).mock.calls
       .map(([commands, target]) => `${target ?? 'default'}:${commands[0]!.command}:${commands.length}`);
     expect(calls).toEqual([
-      'default:menu:5', 'all_private_chats:menu:5', 'all_group_chats:menu:5', '123:menu:11', '555:menu:5',
+      'default:menu:5', 'all_private_chats:menu:5', 'all_group_chats:menu:5', '123:menu:12', '555:menu:5',
     ]);
   });
 
   it('puts /menu first in Telegram\'s command list, for members and the owner', async () => {
     const { MEMBER_COMMANDS, ADMIN_COMMANDS } = await import('../src/notification/telegram.commands.js');
     expect(MEMBER_COMMANDS.map((c) => c.command)).toEqual(['menu', 'stock', 'alerts', 'history', 'leave']);
-    expect(ADMIN_COMMANDS.map((c) => c.command)).toEqual(['menu', 'stock', 'alerts', 'history', 'status', 'models', 'invite', 'members', 'news', 'pause', 'resume']);
+    expect(ADMIN_COMMANDS.map((c) => c.command)).toEqual(['menu', 'stock', 'alerts', 'history', 'restats', 'status', 'models', 'invite', 'members', 'news', 'pause', 'resume']);
   });
 
   it.each(['/menu', '/help', 'เมนู'])('opens the main menu with %s', async (text) => {
     await new TelegramCommandService().handleUpdate(update(text));
     const [, , keyboard] = vi.mocked(telegramNotificationService.sendMenu).mock.calls[0]!;
-    expect(buttons(keyboard).map((b) => b.callback_data)).toEqual(['s', 'a', 'h', 'mo', 'st', 'inv', 'sl', 'nw', 'dml:0', 'fee']);
+    expect(buttons(keyboard).map((b) => b.callback_data)).toEqual(['s', 'a', 'h', 'rs', 'mo', 'st', 'inv', 'sl', 'nw', 'dml:0', 'fee']);
   });
 
   it('lists every model, then each color + size of one model as its own button', async () => {
@@ -1002,5 +1003,52 @@ describe('renewal receipts', () => {
     ]]);
     expect(members.get('555')).toMatchObject({ expiresOn });
     expect(telegramNotificationService.sendUnchecked).toHaveBeenLastCalledWith('555', expect.stringContaining('อัปเดตวันหมดอายุ'));
+  });
+});
+
+
+describe('admin restock statistics access and navigation', () => {
+  it('opens the admin command and weekday report', async () => {
+    const { service, history } = fakes();
+    await service.handleUpdate(update('/restats'));
+    expect(vi.mocked(telegramNotificationService.sendMenu).mock.calls.at(-1)![2].flat().map((b) => b.callback_data)).toContain('rsdays');
+    await service.handleUpdate(tap('rst:3'));
+    expect(history.statistics).toHaveBeenCalledTimes(1);
+    expect(lastEdit()[2]).toContain('3');
+    expect(lastEdit()[2]).toContain('09:00');
+  });
+  it('blocks member commands and forged callbacks before reading statistics', async () => {
+    members.set('555', { chatId: '555', name: 'Member', joinedAt: new Date(), approved: true });
+    const { service, history } = fakes();
+    await service.handleUpdate(update('/restats', 555));
+    expect(telegramNotificationService.reply).toHaveBeenCalledTimes(1);
+    for (const callback of ['rs', 'rsdays', 'rst:3', 'rsd:0', 'rsw:0', 'rsrange', 'rsr:0']) {
+      await service.handleUpdate(tap(callback, 555));
+    }
+    expect(history.statistics).not.toHaveBeenCalled();
+    expect(telegramNotificationService.editMenu).not.toHaveBeenCalled();
+  });
+  it('validates weekdays before querying', async () => {
+    const { service, history } = fakes();
+    for (const callback of ['rst:7', 'rst:-1', 'rst:no']) await service.handleUpdate(tap(callback));
+    expect(history.statistics).not.toHaveBeenCalled();
+  });
+  it('validates and applies custom inclusive Bangkok dates', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-08T09:00:00Z'));
+    try {
+      const { service, history } = fakes();
+      await service.handleUpdate(tap('rsrange'));
+      await service.handleUpdate(update('2026-11-01 2026-11-04'));
+      expect(history.statistics).toHaveBeenCalledWith(new Date('2026-10-31T17:00:00Z'), new Date('2026-11-04T17:00:00Z'));
+      await service.handleUpdate(tap('rsr:0'));
+      expect(history.statistics).toHaveBeenCalledTimes(2);
+      await service.handleUpdate(tap('rsrange'));
+      await service.handleUpdate(update('2026-11-05 2026-11-01'));
+      expect(history.statistics).toHaveBeenCalledTimes(2);
+      await service.handleUpdate(update('/menu'));
+      await service.handleUpdate(update('2026-11-01 2026-11-04'));
+      expect(history.statistics).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
   });
 });

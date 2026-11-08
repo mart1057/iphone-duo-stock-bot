@@ -342,6 +342,21 @@ nav.tabs:not(.ready) a[aria-current="page"]{background:var(--accent)}
     <div class="sub" id="rs-sub" style="margin:0">กำลังโหลด…</div>
     <div class="chips" id="rs-days" role="group" aria-label="ช่วงเวลา"></div>
   </div>
+  <form id="rs-filters" class="tools vsub">
+    <label>วันในสัปดาห์
+      <select id="rs-weekday" aria-label="วันในสัปดาห์">
+        <option value="">ทุกวัน</option>
+        <option value="0">ทุกวันจันทร์</option><option value="1">ทุกวันอังคาร</option>
+        <option value="2">ทุกวันพุธ</option><option value="3">ทุกวันพฤหัสบดี</option>
+        <option value="4">ทุกวันศุกร์</option><option value="5">ทุกวันเสาร์</option><option value="6">ทุกวันอาทิตย์</option>
+      </select>
+    </label>
+    <label>ตั้งแต่ <input type="date" id="rs-from" aria-label="วันเริ่มต้น"></label>
+    <label>ถึง <input type="date" id="rs-to" aria-label="วันสิ้นสุด"></label>
+    <button type="submit">ใช้ตัวกรอง</button>
+    <button type="button" id="rs-reset">ล้างตัวกรอง</button>
+    <span class="sub" style="margin:0">เวลาไทย · รวมวันสิ้นสุด</span>
+  </form>
   <section class="kpis k4">
     <div class="kpi"><div class="label">ของเข้า (ครั้ง × สาขา)</div><div class="value" id="rs-events">–</div><div class="hint" id="rs-drops">&nbsp;</div></div>
     <div class="kpi"><div class="label">แบบที่เคยเข้า</div><div class="value" id="rs-variants">–</div><div class="hint" id="rs-stores">&nbsp;</div></div>
@@ -365,11 +380,13 @@ nav.tabs:not(.ready) a[aria-current="page"]{background:var(--accent)}
       <div class="card-b"><div class="hbars" id="rs-bystore"></div></div></section>
   </div>
   <section class="card">
-    <div class="card-h"><h2>ของเข้าล่าสุด</h2></div>
+    <div class="card-h"><h2>ของเข้าล่าสุด</h2><span class="sub" style="margin:0" id="rs-recent-summary" aria-live="polite"></span></div>
+    <div class="card-b" id="rs-recent-date-picker" hidden><div class="chips" id="rs-recent-dates" role="group" aria-label="เลือกวันที่ของเข้า" style="max-height:180px;overflow:auto"></div></div>
     <div class="tscroll"><table>
       <thead><tr><th>เวลาเจอของ</th><th>แบบ</th><th>สาขา</th><th>ผล</th></tr></thead>
       <tbody id="rs-recent"></tbody>
     </table></div>
+    <div class="tools card-b" id="rs-recent-pages" aria-label="หน้ารายการของเข้า"></div>
     <div class="empty" id="rs-empty" hidden>ช่วงนี้ยังไม่มีของเข้า</div>
     <div class="note">เวลาที่แสดงคือเวลาที่บอทเจอของ · นับ 1 ครั้งต่อ 1 สาขา · หลายสาขาเข้าภายใน 1 ชม. นับเป็น 1 รอบ</div>
   </section>
@@ -673,14 +690,27 @@ nav.tabs:not(.ready) a[aria-current="page"]{background:var(--accent)}
   }
 
   // ---------- restock statistics ----------
-  var rs = { days: 30, data: null };
-  function loadRestocks(){ return api('GET', '/api/restocks?days=' + rs.days).then(function(d){ rs.data = d; renderRestocks(); }); }
+  var rs = { days: 30, data: null, weekday: '', from: '', to: '', selectedDates: [], page: 0, request: 0 };
+  function loadRestocks(){
+    var query = new URLSearchParams({ days: String(rs.days) });
+    if (rs.weekday !== '') query.set('weekday', rs.weekday);
+    if (rs.from && rs.to) { query.set('from', rs.from); query.set('to', rs.to); }
+    rs.selectedDates.forEach(function(date){ query.append('recentDates', date); });
+    query.set('page', String(rs.page));
+    var request = ++rs.request;
+    return api('GET', '/api/restocks?' + query.toString()).then(function(d){
+      if (request !== rs.request) return;
+      rs.page = d.recentPagination.page; rs.data = d; renderRestocks();
+    });
+  }
   function renderRestocks(){
     var d = rs.data; if (!d) return;
     var opts = [7,30,90,180].filter(function(n){ return n <= d.retentionDays; });
     if (opts.indexOf(d.retentionDays) < 0) opts.push(d.retentionDays);
-    $('rs-days').innerHTML = opts.map(function(n){ return '<button class="chip" type="button" data-rsdays="' + n + '" aria-pressed="' + (rs.days === n) + '">' + (n >= 30 && n % 30 === 0 ? (n/30) + ' เดือน' : n + ' วัน') + '</button>'; }).join('');
-    $('rs-sub').textContent = 'ย้อนหลัง ' + d.days + ' วัน · เก็บประวัติสูงสุด ' + d.retentionDays + ' วัน';
+    $('rs-days').innerHTML = opts.map(function(n){ return '<button class="chip" type="button" data-rsdays="' + n + '" aria-pressed="' + (!rs.from && rs.days === n) + '">' + (n >= 30 && n % 30 === 0 ? (n/30) + ' เดือน' : n + ' วัน') + '</button>'; }).join('');
+    $('rs-sub').textContent = (d.period ? fmtKey(d.period.from) + ' – ' + fmtKey(d.period.to) : 'ย้อนหลัง ' + d.days + ' วัน') + (rs.weekday !== '' ? ' · ทุกวัน' + WEEK[Number(rs.weekday)] : ' · ทุกวัน') + ' · เก็บประวัติสูงสุด ' + d.retentionDays + ' วัน';
+    $('rs-weekday').value = rs.weekday;
+    $('rs-from').value = rs.from; $('rs-to').value = rs.to;
     var t = d.totals;
     $('rs-events').textContent = t.events;
     $('rs-drops').textContent = t.drops + ' รอบ';
@@ -691,13 +721,26 @@ nav.tabs:not(.ready) a[aria-current="page"]{background:var(--accent)}
     $('rs-last-h').textContent = t.lastAt ? ago(t.lastAt) : ' ';
     var dayItems = d.byDay.map(function(x){ var p = x.date.split('-'); return { n:x.count, label: Number(p[2]) + '/' + Number(p[1]), tip: fmtKey(x.date) }; });
     cols($('rs-byday'), $('rs-byday-x'), dayItems, Math.max(1, Math.ceil(dayItems.length / 10)));
-    $('rs-day-note').textContent = d.days > 90 ? 'แสดง 90 วันล่าสุด' : '';
+    $('rs-day-note').textContent = d.chartTruncated ? 'แสดง 90 วันล่าสุดของช่วงที่เลือก' : '';
     cols($('rs-byhour'), $('rs-byhour-x'), d.byHour.map(function(n, h){ return { n:n, label: pad2(h), tip: pad2(h) + ':00–' + pad2((h+1)%24) + ':00' }; }), 3);
     hbars($('rs-byweek'), d.byWeekday.map(function(n, i){ return { t: WEEK[i], n: n }; }));
     hbars($('rs-byvariant'), d.byVariant.slice(0, 10).map(function(v){ return { t: v.model + ' · ' + v.colorTh + ' · ' + v.storage, n: v.count }; }), 'ช่วงนี้ยังไม่มีของเข้า');
     hbars($('rs-bystore'), d.byStore.map(function(s){ return { t: shortStore(s.store), n: s.count }; }), 'ช่วงนี้ยังไม่มีของเข้า');
+    var pagination = d.recentPagination;
+    var showDateChips = rs.weekday !== '';
+    $('rs-recent-date-picker').hidden = !showDateChips;
+    $('rs-recent-dates').innerHTML = showDateChips ? '<button type="button" class="chip" data-rsdate="" aria-pressed="' + (rs.selectedDates.length === 0) + '">ทุกวันที่ตรงเงื่อนไข</button>' + d.recentDates.map(function(item){
+      return '<button type="button" class="chip" data-rsdate="' + esc(item.date) + '" aria-pressed="' + (rs.selectedDates.indexOf(item.date) >= 0) + '">' + esc(fmtKey(item.date)) + ' · ' + item.count + ' ครั้ง</button>';
+    }).join('') : '';
+    var selection = rs.selectedDates.length ? 'เลือก ' + rs.selectedDates.length + ' วัน · ' : '';
+    var first = pagination.total ? pagination.page * pagination.pageSize + 1 : 0;
+    var last = Math.min((pagination.page + 1) * pagination.pageSize, pagination.total);
+    $('rs-recent-summary').textContent = selection + first + '–' + last + ' จาก ' + pagination.total + ' รายการ';
+    $('rs-recent-pages').innerHTML = '<button type="button" data-rspage="' + (pagination.page - 1) + '" ' + (pagination.page === 0 ? 'disabled' : '') + '>← ก่อนหน้า</button>' +
+      '<span>หน้า ' + (pagination.page + 1) + ' / ' + pagination.pages + '</span>' +
+      '<button type="button" data-rspage="' + (pagination.page + 1) + '" ' + (pagination.page + 1 >= pagination.pages ? 'disabled' : '') + '>ถัดไป →</button>';
     $('rs-empty').hidden = d.recent.length > 0;
-    $('rs-recent').innerHTML = d.recent.slice(0, 20).map(function(e){
+    $('rs-recent').innerHTML = d.recent.map(function(e){
       var res = e.soldOutAt ? '<span class="badge b-mute">หมดใน ' + fmtDur(Date.parse(e.soldOutAt) - Date.parse(e.at)) + '</span>'
         : e.stillAvailable ? '<span class="badge b-ok">🟢 ยังมีของ</span>' : '<span class="badge b-mute">ไม่ทราบเวลาหมด</span>';
       return '<tr><td data-k="เวลา" class="num">' + fmtDT(e.at) + '</td><td data-k="แบบ">' + skuName(e) + '</td><td data-k="สาขา">' + esc(shortStore(e.storeName)) + '</td><td data-k="ผล">' + res + '</td></tr>';
@@ -819,7 +862,44 @@ nav.tabs:not(.ready) a[aria-current="page"]{background:var(--accent)}
   window.addEventListener('hashchange', route);
   document.addEventListener('click', function(ev){
     var b = ev.target.closest('[data-rsdays]'); if (!b) return;
-    rs.days = Number(b.dataset.rsdays); loadRestocks().catch(function(e){ toast(e.message, true); });
+    rs.selectedDates = []; rs.page = 0;
+    rs.days = Number(b.dataset.rsdays); rs.from = ''; rs.to = ''; $('rs-from').value = ''; $('rs-to').value = ''; loadRestocks().catch(function(e){ toast(e.message, true); });
+  });
+  $('rs-recent-dates').addEventListener('click', function(e){
+    var button = e.target.closest('[data-rsdate]'); if (!button) return;
+    var date = button.dataset.rsdate;
+    if (!date) rs.selectedDates = [];
+    else {
+      var index = rs.selectedDates.indexOf(date);
+      if (index >= 0) rs.selectedDates.splice(index, 1);
+      else rs.selectedDates.push(date);
+    }
+    rs.page = 0;
+    loadRestocks().catch(function(e){ toast(e.message, true); });
+  });
+  $('rs-recent-pages').addEventListener('click', function(e){
+    var button = e.target.closest('[data-rspage]'); if (!button || button.disabled) return;
+    rs.page = Number(button.dataset.rspage);
+    loadRestocks().catch(function(e){ toast(e.message, true); });
+  });
+  $('rs-filters').addEventListener('submit', function(e){
+    e.preventDefault();
+    var from = $('rs-from').value, to = $('rs-to').value;
+    if (!!from !== !!to || (from && from > to)) { toast('ระบุวันเริ่มและวันสิ้นสุดให้ครบ โดยวันเริ่มไม่เกินวันสิ้นสุด', true); return; }
+    rs.selectedDates = []; rs.page = 0;
+    rs.weekday = $('rs-weekday').value; rs.from = from; rs.to = to;
+    loadRestocks().catch(function(e){ toast(e.message, true); });
+  });
+  $('rs-weekday').addEventListener('change', function(){
+    rs.selectedDates = []; rs.page = 0;
+    rs.weekday = $('rs-weekday').value;
+    loadRestocks().catch(function(e){ toast(e.message, true); });
+  });
+  $('rs-reset').addEventListener('click', function(){
+    rs.selectedDates = []; rs.page = 0;
+    rs.weekday = ''; rs.from = ''; rs.to = ''; rs.days = 30;
+    $('rs-weekday').value = ''; $('rs-from').value = ''; $('rs-to').value = '';
+    loadRestocks().catch(function(e){ toast(e.message, true); });
   });
   $('st-only').addEventListener('change', function(e){ st.only = e.target.checked; renderStock(); });
   $('fc-model').addEventListener('change', function(e){ fc.model = e.target.value; renderForecast(); });

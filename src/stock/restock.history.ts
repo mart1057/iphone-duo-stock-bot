@@ -1,3 +1,4 @@
+import type { RestockHour } from '../notification/restock.statistics.js';
 import type { PrismaClient } from '@prisma/client';
 import { storageRank } from '../apple/apple.parser.js';
 import { env } from '../config/env.js';
@@ -153,6 +154,20 @@ export class RestockHistoryRepository {
 
   private since(now: Date): Date {
     return new Date(now.getTime() - this.retentionDays() * 24 * 60 * 60 * 1000);
+  }
+
+  /// Aggregate in PostgreSQL so long retained histories do not fill bot memory.
+  async statistics(from: Date, toExclusive: Date): Promise<RestockHour[]> {
+    const rows = await this.db.$queryRaw<Array<{ day: string; hour: number; minute: number; count: bigint }>>`
+      SELECT to_char(checked_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day,
+             EXTRACT(HOUR FROM checked_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')::int AS hour,
+             EXTRACT(MINUTE FROM checked_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')::int AS minute,
+             COUNT(*) AS count
+      FROM stock_history
+      WHERE status = 'AVAILABLE' AND checked_at >= ${from} AND checked_at < ${toExclusive}
+      GROUP BY day, hour, minute ORDER BY day DESC, hour ASC, minute ASC
+    `;
+    return rows.map((row) => ({ ...row, count: Number(row.count) }));
   }
 
   async listSkus(): Promise<SkuOption[]> {

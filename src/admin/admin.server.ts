@@ -13,7 +13,7 @@ import { ModelPauseStore } from '../stock/model.pause.js';
 import { modelsOf } from '../notification/telegram.menus.js';
 import { restockHistoryRepository } from '../stock/restock.history.js';
 import { currentStockRepository } from '../stock/stock.current.js';
-import { buildForecast, buildRestockStats, restockStatsRepository } from '../stock/restock.stats.js';
+import { buildForecast, buildRestockStats, parseRestockFilters, type RestockFilters, restockStatsRepository } from '../stock/restock.stats.js';
 
 const DAY_MS = 86_400_000;
 
@@ -36,10 +36,10 @@ const stockOverview = async () => {
   };
 };
 
-const restockOverview = async (days: number) => {
+const restockOverview = async (days: number, filters: RestockFilters = {}) => {
   const now = new Date();
   const events = await restockStatsRepository.restocksSince(new Date(now.getTime() - days * DAY_MS));
-  return { ...buildRestockStats(events, days, now), retentionDays: env.RESTOCK_HISTORY_RETENTION_DAYS };
+  return { ...buildRestockStats(events, days, now, filters), retentionDays: env.RESTOCK_HISTORY_RETENTION_DAYS };
 };
 
 const forecastOverview = async () => {
@@ -178,7 +178,15 @@ const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> =
   if (method === 'GET' && url.pathname === '/api/restocks') {
     const requested = Number.parseInt(url.searchParams.get('days') ?? '30', 10);
     const days = Math.min(env.RESTOCK_HISTORY_RETENTION_DAYS, Number.isFinite(requested) && requested > 0 ? requested : 30);
-    json(res, 200, await restockOverview(days));
+    let filters: RestockFilters;
+    try { filters = parseRestockFilters(url.searchParams); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'ตัวกรองไม่ถูกต้อง'); }
+    if (filters.from && filters.to) {
+      const today = dateKey();
+      const earliest = dateKey(new Date(Date.now() - env.RESTOCK_HISTORY_RETENTION_DAYS * DAY_MS));
+      if (filters.from > today || filters.to < earliest) throw new HttpError(400, `เลือกช่วงวันที่ที่ทับซ้อนกับข้อมูล ${earliest} ถึง ${today}`);
+    }
+    json(res, 200, await restockOverview(filters.from ? env.RESTOCK_HISTORY_RETENTION_DAYS : days, filters));
     return;
   }
 

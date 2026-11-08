@@ -1,3 +1,4 @@
+import { statisticsHome, weekdayPicker, statisticsReport, bangkokDay, rangeDates } from './restock.statistics.js';
 import { randomUUID } from 'node:crypto';
 import { membershipSettings, type MembershipSettingsStore, parseMembershipPrice, formatMembershipPrice } from './membership.settings.js';
 import { env, isTelegramConfigured, monitoredModelsLabel } from '../config/env.js';
@@ -89,6 +90,7 @@ export const MEMBER_COMMANDS = [
 
 export const ADMIN_COMMANDS = [
   ...MEMBER_COMMANDS.filter((item) => item.command !== 'leave'),
+  { command: 'restats', description: '📊 สถิติเติมของรายวัน / สัปดาห์ / เลือกวัน' },
   { command: 'status', description: '📊 สถานะบอท' },
   { command: 'models', description: '⏯️ หยุด/เริ่มเช็คแต่ละรุ่น' },
   { command: 'invite', description: '🔗 ส่งคำเชิญ' },
@@ -108,6 +110,8 @@ const modelIndexFrom = (ref: string | undefined, models: readonly string[]): num
   ref?.startsWith('#') ? Number.parseInt(ref.slice(1), 10) : models.indexOf(ref ?? '');
 
 export class TelegramCommandService {
+  private readonly awaitingStatisticsRange = new Set<string>();
+  private readonly statisticsRanges = new Map<string, { from: string; to: string }>();
   private controller: AbortController | null = null;
   private task: Promise<void> | null = null;
   private offset = 0;
@@ -200,6 +204,30 @@ export class TelegramCommandService {
       }
     }
     if (!member) return;
+
+    if (command.startsWith('/')) this.awaitingStatisticsRange.delete(chatId);
+    if (command === '/restats') {
+      if (!admin) { await telegramNotificationService.reply(chatId, '🔒 คำสั่งนี้ใช้ได้เฉพาะเจ้าของบอท'); return; }
+      this.directDrafts.delete(chatId);
+      this.awaitingPrice.delete(chatId);
+      this.awaitingExpiry.delete(chatId);
+      this.newsDrafts.delete(chatId);
+      await this.sendMenu(chatId, statisticsHome(this.history.retentionDays()));
+      return;
+    }
+    if (admin && this.awaitingStatisticsRange.has(chatId)) {
+      const range = rangeDates(message.text);
+      const now = new Date();
+      const earliest = bangkokDay(new Date(now.getTime() - this.history.retentionDays() * 86400_000));
+      if (!range || range.from < earliest || range.to > bangkokDay(now)) {
+        await telegramNotificationService.reply(chatId, `⚠️ ใช้รูปแบบ YYYY-MM-DD YYYY-MM-DD\nเลือกวันที่ระหว่าง ${earliest} ถึง ${bangkokDay(now)}`);
+        return;
+      }
+      this.statisticsRanges.set(chatId, range);
+      this.awaitingStatisticsRange.delete(chatId);
+      await this.sendMenu(chatId, () => this.restockStatistics('range', 0, undefined, range));
+      return;
+    }
 
     if (admin && this.directDrafts.has(chatId)) {
       if (command.startsWith('/')) {
@@ -645,6 +673,7 @@ export class TelegramCommandService {
     }
     const messageId = query.message.message_id;
     const [action = '', code, ...rest] = (query.data ?? '').split(':');
+    if (action !== 'rsrange') this.awaitingStatisticsRange.delete(chatId);
     if (action !== 'fee') this.awaitingPrice.delete(chatId);
     if (!['dm', 'dms', 'dmx'].includes(action)) this.directDrafts.delete(chatId);
 
@@ -652,6 +681,35 @@ export class TelegramCommandService {
     try {
       let menu: Menu;
       switch (action) {
+        case 'rs':
+        case 'rsdays':
+        case 'rsd':
+        case 'rsw':
+        case 'rst':
+        case 'rsrange':
+        case 'rsr': {
+          if (!admin) {
+            await telegramNotificationService.answerCallback(query.id, '🔒 สำหรับเจ้าของบอทเท่านั้น');
+            return;
+          }
+          this.awaitingExpiry.delete(chatId);
+          this.newsDrafts.delete(chatId);
+          if (action === 'rs') menu = statisticsHome(this.history.retentionDays());
+          else if (action === 'rsdays') menu = weekdayPicker();
+          else if (action === 'rsrange') {
+            this.awaitingStatisticsRange.add(chatId);
+            menu = { text: '✏️ กำหนดช่วงวันที่ (เวลาไทย)\n\nพิมพ์วันเริ่มและวันสิ้นสุด คั่นด้วยเว้นวรรค\nรูปแบบ: YYYY-MM-DD YYYY-MM-DD\nเช่น 2026-11-01 2026-11-08\n\nใช้ได้เฉพาะช่วงประวัติที่ยังเก็บไว้ · ยกเลิกด้วย /menu', keyboard: [[{ text: '⬅️ สถิติเติมของ', callback_data: 'rs' }]] };
+          } else {
+            const weekday = action === 'rst' ? Number(code) : undefined;
+            if (weekday !== undefined && (!Number.isInteger(weekday) || weekday < 0 || weekday > 6)) {
+              await telegramNotificationService.answerCallback(query.id, 'วันไม่ถูกต้อง'); return;
+            }
+            const range = action === 'rsr' ? this.statisticsRanges.get(chatId) : undefined;
+            if (action === 'rsr' && !range) menu = statisticsHome(this.history.retentionDays());
+            else menu = await this.restockStatistics(action === 'rsw' ? 'week' : action === 'rst' ? 'weekday' : action === 'rsr' ? 'range' : 'day', Number(action === 'rst' ? rest[0] ?? 0 : code ?? 0), weekday, range);
+          }
+          break;
+        }
         case 'x':
           // Section label inside a keyboard - nothing to do.
           await telegramNotificationService.answerCallback(query.id);
@@ -1041,6 +1099,16 @@ export class TelegramCommandService {
   private async historyHomeMenu(chatId: string): Promise<Menu> {
     const [skus, counts] = await Promise.all([this.visibleSkus(chatId), this.history.restockCounts()]);
     return historyHome(skus, counts, this.history.retentionDays());
+  }
+
+  private async restockStatistics(mode: 'day' | 'week' | 'weekday' | 'range', page: number, weekday?: number, range?: { from: string; to: string }): Promise<Menu> {
+    const now = new Date();
+    const retentionStart = new Date(now.getTime() - this.history.retentionDays() * 86400_000);
+    const start = range ? new Date(`${range.from}T00:00:00+07:00`) : retentionStart;
+    const from = start < retentionStart ? retentionStart : start;
+    const requestedEnd = range ? new Date(new Date(`${range.to}T00:00:00+07:00`).getTime() + 86400_000) : now;
+    const to = requestedEnd > now ? now : requestedEnd;
+    return statisticsReport(await this.history.statistics(from, to), mode, bangkokDay(from), range?.to ?? bangkokDay(to), page, weekday);
   }
 
   private async sendMenu(chatId: string, menu: Menu | (() => Promise<Menu>)): Promise<void> {

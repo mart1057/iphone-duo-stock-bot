@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
 import { prisma as defaultPrisma } from '../database/prisma.js';
-import { dateKey, hourOfDay } from '../utils/datetime.js';
+import { addDays, dateKey, hourOfDay } from '../utils/datetime.js';
 import { pairRestocks, type HistoryRow, type SkuOption } from './restock.history.js';
 
 const DAY_MS = 86_400_000;
@@ -57,13 +57,57 @@ const inStockMs = (events: readonly VariantRestock[]): number[] =>
 
 // -- Statistics page ---------------------------------------------------------
 
-export const buildRestockStats = (events: readonly VariantRestock[], days: number, now: Date = new Date()) => {
-  const since = now.getTime() - days * DAY_MS;
-  const inRange = events.filter((e) => e.at.getTime() >= since).sort((a, b) => b.at.getTime() - a.at.getTime());
+export interface RestockFilters { from?: string; to?: string; weekday?: number; recentDate?: string; recentDates?: string[]; page?: number }
+
+export const parseRestockFilters = (params: URLSearchParams): RestockFilters => {
+  const result: RestockFilters = {};
+  for (const key of ['from', 'to', 'recentDate'] as const) {
+    const value = params.get(key);
+    if (!value) continue;
+    const parsed = new Date(`${value}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+      throw new Error('กรุณาระบุวันที่จริงในรูปแบบ YYYY-MM-DD');
+    }
+    result[key] = value;
+  }
+  const recentDates = params.getAll('recentDates');
+  if (recentDates.length) {
+    for (const value of recentDates) {
+      const parsed = new Date(`${value}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+        throw new Error('วันที่เลือกไม่ถูกต้อง');
+      }
+    }
+    result.recentDates = [...new Set(recentDates)];
+  }
+  if (!!result.from !== !!result.to) throw new Error('กรุณาระบุทั้งวันเริ่มและวันสิ้นสุด');
+  if (result.from && result.to && result.from > result.to) throw new Error('วันเริ่มต้องไม่เกินวันสิ้นสุด');
+  const weekday = params.get('weekday');
+  if (weekday !== null && weekday !== '') {
+    if (!/^[0-6]$/.test(weekday)) throw new Error('วันในสัปดาห์ไม่ถูกต้อง');
+    result.weekday = Number(weekday); // Monday = 0, as in existing charts.
+  }
+  const page = params.get('page');
+  if (page !== null) {
+    if (!/^\d+$/.test(page) || !Number.isSafeInteger(Number(page))) throw new Error('หมายเลขหน้าไม่ถูกต้อง');
+    result.page = Number(page);
+  }
+  return result;
+};
+
+export const buildRestockStats = (events: readonly VariantRestock[], days: number, now: Date = new Date(), filters: RestockFilters = {}) => {
+  const retentionStart = now.getTime() - days * DAY_MS;
+  const since = filters.from ? Math.max(retentionStart, new Date(`${filters.from}T00:00:00+07:00`).getTime()) : retentionStart;
+  const until = filters.to ? Math.min(now.getTime(), new Date(`${addDays(filters.to, 1)}T00:00:00+07:00`).getTime()) : now.getTime();
+  const inRange = events.filter((e) => e.at.getTime() >= since && e.at.getTime() < until && (filters.weekday === undefined || weekdayOf(e.at) === filters.weekday)).sort((a, b) => b.at.getTime() - a.at.getTime());
 
   const byDay = new Map<string, number>();
-  const chartDays = Math.min(days, 90);
-  for (let i = chartDays - 1; i >= 0; i--) byDay.set(dateKey(new Date(now.getTime() - i * DAY_MS)), 0);
+  const chartEnd = filters.to ? (filters.to < dateKey(now) ? filters.to : dateKey(now)) : dateKey(now);
+  const firstDay = filters.from ? dateKey(new Date(since)) : addDays(chartEnd, -(days - 1));
+  const chartStart = addDays(chartEnd, -89) > firstDay ? addDays(chartEnd, -89) : firstDay;
+  for (let key = chartStart; key <= chartEnd; key = addDays(key, 1)) {
+    if (filters.weekday === undefined || weekdayOf(new Date(`${key}T12:00:00+07:00`)) === filters.weekday) byDay.set(key, 0);
+  }
   const byHour = Array.from({ length: 24 }, () => 0);
   const byWeekday = Array.from({ length: 7 }, () => 0);
   const byStore = new Map<string, number>();
@@ -85,8 +129,29 @@ export const buildRestockStats = (events: readonly VariantRestock[], days: numbe
   const drops = [...new Set(inRange.map((e) => e.variantId))]
     .reduce((sum, id) => sum + dropStarts(inRange.filter((e) => e.variantId === id).map((e) => e.at)).length, 0);
 
+  const dateCounts = new Map<string, number>();
+  for (const event of inRange) {
+    const key = dateKey(event.at);
+    dateCounts.set(key, (dateCounts.get(key) ?? 0) + 1);
+  }
+  // Date chips cover the entire retained selection, including zero-event dates.
+  const recentDates: Array<{ date: string; count: number }> = [];
+  for (let key = dateKey(new Date(since)); key <= chartEnd; key = addDays(key, 1)) {
+    if (filters.weekday === undefined || weekdayOf(new Date(`${key}T12:00:00+07:00`)) === filters.weekday) {
+      recentDates.push({ date: key, count: dateCounts.get(key) ?? 0 });
+    }
+  }
+  recentDates.reverse();
+  const selectedDates = new Set(filters.recentDates ?? (filters.recentDate ? [filters.recentDate] : []));
+  const recentEvents = selectedDates.size ? inRange.filter((event) => selectedDates.has(dateKey(event.at))) : inRange;
+  const pageSize = 20;
+  const pages = Math.max(1, Math.ceil(recentEvents.length / pageSize));
+  const page = Math.max(0, Math.min(filters.page ?? 0, pages - 1));
   return {
     days,
+    filters,
+    chartTruncated: chartStart > firstDay,
+    period: { from: dateKey(new Date(since)), to: chartEnd },
     totals: {
       events: inRange.length,
       drops,
@@ -102,7 +167,9 @@ export const buildRestockStats = (events: readonly VariantRestock[], days: numbe
     byVariant: [...byVariant.values()]
       .sort((a, b) => b.count - a.count || b.lastAt.getTime() - a.lastAt.getTime())
       .map((v) => ({ ...v, lastAt: v.lastAt.toISOString() })),
-    recent: inRange.slice(0, 60).map((e) => ({
+    recentDates,
+    recentPagination: { page, pages, pageSize, total: recentEvents.length, date: filters.recentDate ?? null, dates: [...selectedDates] },
+    recent: recentEvents.slice(page * pageSize, (page + 1) * pageSize).map((e) => ({
       model: e.model, colorTh: e.colorTh, storage: e.storage, storeName: e.storeName,
       at: e.at.toISOString(), soldOutAt: e.soldOutAt?.toISOString() ?? null, stillAvailable: e.stillAvailable,
     })),
@@ -189,8 +256,7 @@ export class RestockStatsRepository {
           },
         },
       },
-      orderBy: { checkedAt: 'asc' },
-      take: 100_000,
+      orderBy: [{ checkedAt: 'asc' }, { id: 'asc' }],
     });
 
     const groups = new Map<string, { rows: HistoryRow[]; meta: (typeof rows)[number]['stock']['variant'] }>();
